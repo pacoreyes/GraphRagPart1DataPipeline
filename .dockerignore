@@ -1,0 +1,28 @@
+# .dockerignore
+
+# Ignore the virtual environment
+.venv/
+
+# Ignore local data volumes
+data_volume/
+docs/
+tests/
+
+# Ignore git history
+.git/
+.gitignore
+
+# Ignore local secrets
+.env
+
+# Ignore build artifacts and caches
+dist/
+*.egg-info/
+__pycache__/
+*.pyc
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+

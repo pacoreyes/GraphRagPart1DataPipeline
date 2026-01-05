@@ -1,0 +1,16 @@
+version: "3.9"
+services:
+  dagster_pipeline:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - DAGSTER_ENV=DEV
+      # Uncomment and update path if using Google credentials
+      # - GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-credentials.json
+    volumes:
+      # Mount your local code for faster feedback loop (optional, but good for dev)
+      - ./src:/app/src
+      - ./pyproject.toml:/app/pyproject.toml
+      # Mount GCP credentials if needed
+      # - ./gcp-credentials.json:/app/gcp-credentials.json
