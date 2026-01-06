@@ -1,10 +1,10 @@
-# GraphRAG Demo - Part 1: Data Pipeline
+# GraphRAG - Part 1: Data Pipeline
 
 *Last update: January 6, 2026*
 
-This repo is part of a larger project **GraphRAG Demo**, in which I show how the GraphRAG pattern works. 
+This repo is part of a larger project **GraphRAG** app, in which I show how the GraphRAG pattern works. 
 
-Part 1 is a basic Data Pipeline made with **Dagster**, which orchestrates the data ingestion from multiple sources for making a knowledge graph (in **Neo4j** graph database) and preparing unstructured data for a RAG system. This app is ready to be deployed on the cloud in a Docker container.
+Part 1 is a basic Data Pipeline made with **Dagster**, which orchestrates the data ingestion from multiple sources for making a knowledge graph (in **Neo4j** graph database) and an embedding model (in **ChromaDB** vector database) for a RAG system. This app is ready to be deployed on the cloud in a Docker container.
 
 ## Domain: Electronic Music
 
