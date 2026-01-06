@@ -34,7 +34,7 @@ from data_pipeline.utils.wikipedia_helpers import (
 
 @asset(
     name="extract_wikipedia_articles",
-    deps=["extract_artists", "extract_genres", "build_artist_index"],
+    deps=["extract_genres"],
     description="Extract Wikipedia articles, clean, split, and enrich with metadata for RAG.",
 )
 async def extract_wikipedia_articles(
