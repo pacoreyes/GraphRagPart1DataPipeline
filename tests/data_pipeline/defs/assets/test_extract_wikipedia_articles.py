@@ -1,5 +1,5 @@
 # ----------------------------------------------------------- 
-# Unit Tests for extract_wikipedia_articles
+# Unit Tests for wikipedia_articles
 # Dagster Data pipeline for Structured and Unstructured Data
 # 
 # (C) 2025-2026 Juan-Francisco Reyes, Cottbus, Germany

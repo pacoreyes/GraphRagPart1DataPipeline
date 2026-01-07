@@ -8,10 +8,10 @@
 # -----------------------------------------------------------
 
 """
-Wikidata helpers
+Wikidata helpers (Infrastructure Layer)
+Generic functions for interacting with Wikidata SPARQL and Action APIs.
 """
 import asyncio
-from pathlib import Path
 from typing import Any, Callable, Optional, Dict, List
 
 import httpx
@@ -23,7 +23,6 @@ from data_pipeline.utils.network_helpers import (
     make_async_request_with_retries,
     run_tasks_concurrently,
 )
-from data_pipeline.utils.io_helpers import JSONLWriter
 
 WIKIDATA_CACHE_DIR = settings.wikidata_cache_dirpath
 
@@ -137,6 +136,7 @@ async def fetch_sparql_query_async(
 
 
 def get_sparql_binding_value(data: dict[str, Any], key: str) -> Any:
+    """Extracts a simple value from a SPARQL result binding."""
     return data.get(key, {}).get("value")
 
 
@@ -167,17 +167,12 @@ async def async_fetch_wikidata_entities_batch(
                     with open(cache_file, "rb") as f:
                         return msgspec.json.decode(f.read())
                 data = await asyncio.to_thread(read_json)
-                
-                # REFETCH IF SITELINKS ARE MISSING (Stale Cache)
                 if data and "sitelinks" in data:
                     return data
-                else:
-                    context.log.debug(f"Cache for {qid} is stale (missing sitelinks). Refetching.")
             except Exception as e:
                 context.log.warning(f"Failed to read cache for {qid}: {e}")
         return None
 
-    # Check cache for all QIDs concurrently
     cache_results = await asyncio.gather(*[check_cache(qid) for qid in qids])
     
     for qid, cached_data in zip(qids, cache_results):
@@ -221,7 +216,6 @@ async def async_fetch_wikidata_entities_batch(
             data = response.json()
             entities = data.get("entities", {})
             
-            # Cache individual entities
             for qid, entity_data in entities.items():
                 if "missing" in entity_data:
                     continue
@@ -258,9 +252,7 @@ async def async_resolve_qids_to_labels(
     qids: List[str],
     client: Optional[httpx.AsyncClient] = None,
 ) -> Dict[str, str]:
-    """
-    Resolves a list of QIDs to their English labels.
-    """
+    """Resolves a list of QIDs to their English labels."""
     entities = await async_fetch_wikidata_entities_batch(context, qids, client)
     labels = {}
     for qid, data in entities.items():
@@ -282,15 +274,12 @@ def extract_wikidata_aliases(entity_data: Dict[str, Any], lang: str = "en") -> L
 
 
 def extract_wikidata_wikipedia_url(entity_data: Dict[str, Any], lang: str = "en") -> Optional[str]:
-    """
-    Extracts the Wikipedia URL for a given language (e.g., 'enwiki').
-    """
+    """Extracts the Wikipedia URL for a given language (e.g., 'enwiki')."""
     wiki_key = f"{lang}wiki"
     sitelinks = entity_data.get("sitelinks", {})
     if wiki_key in sitelinks:
         title = sitelinks[wiki_key].get("title")
         if title:
-            # Replace spaces with underscores for the URL
             encoded_title = title.replace(" ", "_")
             return f"https://{lang}.wikipedia.org/wiki/{encoded_title}"
     return None
@@ -326,9 +315,7 @@ def extract_wikidata_claim_value(
 def extract_wikidata_claim_ids(
     entity_data: Dict[str, Any], property_id: str
 ) -> List[str]:
-    """
-    Extracts all claim values (IDs) for a property (e.g., 'P136' for Genres).
-    """
+    """Extracts all claim values (IDs) for a property."""
     claims = entity_data.get("claims", {})
     if property_id not in claims:
         return []
@@ -341,24 +328,3 @@ def extract_wikidata_claim_ids(
             if datavalue.get("type") == "wikibase-entityid":
                 ids.append(datavalue.get("value", {}).get("id"))
     return [i for i in ids if i]
-
-
-def extract_wikidata_country_id(entity_data: dict[str, Any]) -> str | None:
-    """
-    Extracts the country QID from Wikidata entity data.
-    Tries P495 (Country of origin) first, then P27 (Country of citizenship).
-    """
-    return extract_wikidata_claim_value(
-        entity_data, "P495"
-    ) or extract_wikidata_claim_value(entity_data, "P27")
-
-
-def extract_wikidata_genre_ids(entity_data: dict[str, Any]) -> list[str]:
-    """
-    Extracts genre QIDs from Wikidata entity data.
-    Combines P136 (Genre) and P101 (Field of work) and returns unique sorted list.
-    """
-    ids = extract_wikidata_claim_ids(entity_data, "P136") + extract_wikidata_claim_ids(
-        entity_data, "P101"
-    )
-    return sorted(list(set(ids)))

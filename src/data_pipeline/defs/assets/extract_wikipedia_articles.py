@@ -31,33 +31,43 @@ from data_pipeline.utils.wikipedia_helpers import (
 )
 from data_pipeline.defs.resources import WikidataResource
 
+# --- Domain Constants ---
+WIKIPEDIA_EXCLUSION_HEADERS = [
+    "References",
+    "External links",
+    "See also",
+    "Further reading",
+    "Notes",
+    "Discography"
+]
+
 
 @asset(
-    name="extract_wikipedia_articles",
+    name="wikipedia_articles",
     description="Extract Wikipedia articles, clean, split, and enrich with metadata for RAG.",
 )
 async def extract_wikipedia_articles(
     context: AssetExecutionContext, 
     wikidata: WikidataResource,
-    extract_artists: pl.DataFrame,
-    extract_genres: pl.DataFrame,
-    build_artist_index: pl.DataFrame
+    artists: pl.DataFrame,
+    genres: pl.DataFrame,
+    artist_index: pl.DataFrame
 ) -> pl.DataFrame:
     """
     Orchestrates the fetching, cleaning, chunking, and enrichment of Wikipedia articles
     for all validated artists in the pipeline.
     """
-    context.log.info("Starting Wikipedia extraction.")
+    context.log.info("Loading validated artists, genres, and artist index from inputs.")
 
     # 1. Prepare Mappings
-    genres_map = dict(zip(extract_genres["id"].to_list(), extract_genres["name"].to_list()))
+    genres_map = dict(zip(genres["id"].to_list(), genres["name"].to_list()))
     inception_year_map = {}
     
     def extract_qid(uri: str) -> str:
         return uri.split("/")[-1] if "/" in uri else uri
         
-    uris = build_artist_index["artist_uri"].to_list()
-    dates = build_artist_index["start_date"].to_list()
+    uris = artist_index["artist_uri"].to_list()
+    dates = artist_index["start_date"].to_list()
     
     for uri, date in zip(uris, dates):
         qid = extract_qid(uri)
@@ -68,8 +78,9 @@ async def extract_wikipedia_articles(
         except (ValueError, AttributeError):
             continue
 
-    rows_to_process = extract_artists.to_dicts()
-    context.log.info(f"Found {len(rows_to_process)} artists to process.")
+    rows_to_process = artists.to_dicts()
+    total_rows = len(rows_to_process)
+    context.log.info(f"Found {total_rows} artists to process for Wikipedia articles.")
 
     # 2. Setup Splitter
     tokenizer = AutoTokenizer.from_pretrained(
@@ -88,20 +99,23 @@ async def extract_wikipedia_articles(
         wiki_url: str,
         client: httpx.AsyncClient
     ) -> List[Article]:
+        
         artist_name = artist_row.get("name")
         qid = artist_row.get("id")
+        
         if not wiki_url:
             return []
+            
         title = wiki_url.split("/")[-1]
         
-        # Fetch
         raw_text = await async_fetch_wikipedia_article(context, title, qid=qid, client=client)
+        
         if not raw_text:
             return []
 
-        # Offload CPU-bound text processing to a thread
+        # Domain-specific text cleaning
         def process_text(text: str) -> List[str]:
-            cleaned = normalize_and_clean_text(clean_wikipedia_text(text))
+            cleaned = normalize_and_clean_text(clean_wikipedia_text(text, WIKIPEDIA_EXCLUSION_HEADERS))
             return text_splitter.split_text(cleaned)
 
         chunks = await asyncio.to_thread(process_text, raw_text)
@@ -125,6 +139,7 @@ async def extract_wikipedia_articles(
                 total_chunks=total_chunks
             )
             results.append(Article(metadata=meta, article=enriched_text))
+            
         return results
 
     async def process_batch_wrapper(
@@ -132,17 +147,17 @@ async def extract_wikipedia_articles(
     ) -> list[Article]:
         qids = [row["id"] for row in batch]
         entities = await async_fetch_wikidata_entities_batch(context, qids, client)
+        
         tasks = []
         for row in batch:
             qid = row.get("id")
             entity_data = entities.get(qid)
-            if not entity_data:
-                continue
+            if not entity_data: continue
             wiki_url = extract_wikidata_wikipedia_url(entity_data)
             if wiki_url:
                 tasks.append(async_process_artist(row, wiki_url, client))
-        if not tasks:
-            return []
+        
+        if not tasks: return []
         results_nested = await asyncio.gather(*tasks)
         return [item for sublist in results_nested for item in sublist]
 
@@ -157,12 +172,15 @@ async def extract_wikipedia_articles(
         client=wikidata,
     )
 
-    articles = [msgspec.to_builtins(article) async for article in article_stream]
-    context.log.info(f"Fetched {len(articles)} Wikipedia chunks.")
+    # 5. Collect results
+    context.log.info("Collecting Wikipedia articles.")
+    articles_list = [msgspec.to_builtins(article) async for article in article_stream]
+
+    context.log.info(f"Wikipedia extraction complete. Fetched {len(articles_list)} chunks.")
     
     context.add_output_metadata({
-        "chunk_count": len(articles),
-        "artist_count": len(rows_to_process)
+        "chunk_count": len(articles_list),
+        "artist_count": total_rows
     })
     
-    return pl.DataFrame(articles)
+    return pl.DataFrame(articles_list)

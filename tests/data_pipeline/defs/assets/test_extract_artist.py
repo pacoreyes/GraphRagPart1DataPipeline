@@ -1,5 +1,5 @@
 # -----------------------------------------------------------
-# Unit Tests for extract_artist
+# Unit Tests for artists
 # Dagster Data pipeline for Structured and Unstructured Data
 #
 # (C) 2025-2026 Juan-Francisco Reyes, Cottbus, Germany
@@ -13,11 +13,11 @@ from unittest.mock import patch, MagicMock
 import polars as pl
 from dagster import build_asset_context
 
-from data_pipeline.defs.assets.extract_artists import extract_artist
+from data_pipeline.defs.assets.extract_artists import extract_artists
 from data_pipeline.defs.resources import ApiConfiguration
 
 @pytest.mark.asyncio
-@patch("data_pipeline.defs.assets.extract_artists.async_get_artist_info_with_fallback")
+@patch("data_pipeline.defs.assets.extract_artists.async_fetch_lastfm_data_with_cache")
 @patch("data_pipeline.defs.assets.extract_artists.async_resolve_qids_to_labels")
 @patch("data_pipeline.defs.assets.extract_artists.async_fetch_wikidata_entities_batch")
 @patch("data_pipeline.defs.assets.extract_artists.settings")
@@ -28,15 +28,16 @@ async def test_extract_artist(
     mock_lastfm
 ):
     """
-    Test the extract_artist asset.
+    Test the artists asset.
     """
     # Setup mock settings
     mock_settings.WIKIDATA_ACTION_BATCH_SIZE = 10
     mock_settings.WIKIDATA_SPARQL_REQUEST_TIMEOUT = 10
     mock_settings.LASTFM_CONCURRENT_REQUESTS = 2
     mock_settings.LASTFM_API_URL = "http://mock.last.fm"
+    mock_settings.WIKIDATA_CONCEPT_BASE_URI_PREFIX = "http://www.wikidata.org/entity/"
 
-    # Mock Input DataFrame (build_artist_index)
+    # Mock Input DataFrame (artist_index)
     mock_index_df = pl.DataFrame({
         "artist_uri": [
             "http://www.wikidata.org/entity/Q1",
@@ -73,7 +74,7 @@ async def test_extract_artist(
         },
         "Q4": {
             "sitelinks": {"enwiki": {"title": "Artist 4"}},
-            "claims": {},
+            "claims": {}, # NO COUNTRY
             "aliases": {}
         }
     }
@@ -84,19 +85,15 @@ async def test_extract_artist(
         "Q101": "Country B"
     }
 
-    # Mock Last.fm Data
-    mock_lastfm.side_effect = [
-        {
-            "artist": {
-                "mbid": "mbid-1",
-                "tags": {"tag": [{"name": "Tag 1"}, {"name": "Tag 2"}]},
-                "similar": {"artist": [{"name": "Sim 1"}]}
-            }
-        },
-        None,
-        None,
-        None
-    ]
+    # Mock Last.fm Data (Generic Side Effect)
+    async def lastfm_side_effect(context, params, cache_key, client=None):
+        if "mbid" in params and params["mbid"] == "mbid-1":
+            return {"artist": {"mbid": "mbid-1", "tags": {"tag": [{"name": "Tag 1"}]}, "similar": {"artist": [{"name": "Sim 1"}]}}}
+        if "artist" in params and params["artist"] == "Artist 1":
+             return {"artist": {"mbid": "mbid-1", "tags": {"tag": [{"name": "Tag 1"}]}, "similar": {"artist": [{"name": "Sim 1"}]}}}
+        return None
+
+    mock_lastfm.side_effect = lastfm_side_effect
 
     # Mock Context and Resource
     api_config = ApiConfiguration(lastfm_api_key="dummy_key", nomic_api_key="dummy")
@@ -104,11 +101,11 @@ async def test_extract_artist(
     mock_client = MagicMock(spec=httpx.AsyncClient)
 
     # Execution
-    result_df = await extract_artist(context, mock_client, api_config, mock_index_df)
+    result_df = await extract_artists(context, mock_client, api_config, mock_index_df)
 
     # Assertions
     assert isinstance(result_df, pl.DataFrame)
-    assert len(result_df) == 4
+    assert len(result_df) == 3
     
     artist1 = result_df.filter(pl.col("id") == "Q1").to_dicts()[0]
     assert artist1["name"] == "Artist 1"

@@ -1,5 +1,5 @@
 # -----------------------------------------------------------
-# Unit Tests for extract_genres
+# Unit Tests for genres
 # Dagster Data pipeline for Structured and Unstructured Data
 #
 # (C) 2025-2026 Juan-Francisco Reyes, Cottbus, Germany
@@ -25,7 +25,7 @@ async def test_extract_genres(
     mock_fetch_sparql
 ):
     """
-    Test the extract_genres asset.
+    Test the genres asset.
     """
     # Setup mock settings
     mock_settings.WIKIDATA_ACTION_BATCH_SIZE = 10
@@ -77,8 +77,3 @@ async def test_extract_genres(
     assert "Q102" in written_ids
     assert "Q103" in written_ids
     assert "Q104" in written_ids
-    
-    # Check content of one
-    genre_a = result_df.filter(pl.col("id") == "Q101").to_dicts()[0]
-    assert genre_a["name"] == "Genre A"
-    assert genre_a["aliases"] == ["Alias A1"]

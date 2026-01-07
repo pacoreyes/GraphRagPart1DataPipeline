@@ -7,7 +7,6 @@
 # email pacoreyes@protonmail.com
 # -----------------------------------------------------------
 
-import httpx
 from dagster import (
     asset, 
     AssetExecutionContext, 
@@ -18,13 +17,11 @@ from typing import Any, Optional
 import polars as pl
 
 from data_pipeline.utils.sparql_queries import get_artists_by_year_range_query
-from data_pipeline.utils.io_helpers import merge_jsonl_files
 from data_pipeline.utils.wikidata_helpers import (
     run_extraction_pipeline,
     get_sparql_binding_value
 )
 from data_pipeline.utils.transformation_helpers import deduplicate_by_priority, normalize_and_clean_text
-from data_pipeline.settings import settings
 from data_pipeline.defs.partitions import decade_partitions, DECADES_TO_EXTRACT
 from data_pipeline.defs.resources import WikidataResource
 
@@ -89,7 +86,7 @@ async def build_artist_index_by_decade(context: AssetExecutionContext, wikidata:
 
 
 @asset(
-    name="build_artist_index",
+    name="artist_index",
     description="Merges all decade-specific artist data and deduplicates the result.",
     ins={
         "build_artist_index_by_decade": AssetIn(partition_mapping=AllPartitionMapping())

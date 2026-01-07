@@ -30,15 +30,15 @@ from data_pipeline.defs.resources import WikidataResource
 
 
 @asset(
-    name="extract_genres",
+    name="genres",
     description="Extract Genres dataset from artists, albums and tracks",
 )
 async def extract_genres(
     context: AssetExecutionContext, 
     wikidata: WikidataResource,
-    extract_artists: pl.DataFrame,
-    extract_albums: pl.DataFrame,
-    extract_tracks: pl.DataFrame
+    artists: pl.DataFrame,
+    albums: pl.DataFrame,
+    tracks: pl.DataFrame
 ) -> pl.DataFrame:
     """
     Extracts all unique music genre IDs from artists, albums, and tracks,
@@ -50,7 +50,7 @@ async def extract_genres(
     # 1. Read input DataFrames and extract unique genre IDs
     genre_ids = set()
     
-    for df in [extract_artists, extract_albums, extract_tracks]:
+    for df in [artists, albums, tracks]:
         genre_ids.update(extract_unique_ids_from_column(df, "genres"))
 
     unique_genre_ids = sorted(list(genre_ids))
@@ -96,7 +96,12 @@ async def extract_genres(
             aliases = [normalize_and_clean_text(a) for a in extract_wikidata_aliases(genre_entity)]
             parent_ids = parents_map.get(genre_id, [])
             
-            batch_results.append(Genre(id=genre_id, name=label, aliases=aliases, parent_ids=parent_ids))
+            batch_results.append(Genre(
+                id=genre_id, 
+                name=label, 
+                aliases=aliases, 
+                parent_ids=parent_ids
+            ))
 
         return batch_results
 
@@ -112,7 +117,7 @@ async def extract_genres(
     
     # 4. Collect results
     context.log.info("Collecting genres.")
-    genres = [msgspec.to_builtins(g) async for g in genre_stream]
+    genres_list = [msgspec.to_builtins(g) async for g in genre_stream]
 
-    context.log.info(f"Successfully fetched {len(genres)} genres.")
-    return pl.DataFrame(genres)
+    context.log.info(f"Successfully fetched {len(genres_list)} genres.")
+    return pl.DataFrame(genres_list)

@@ -1,6 +1,6 @@
 # GraphRAG - Part 1: Data Pipeline
 
-*Last update: January 6, 2026*
+*Last update: January 7, 2026*
 
 This repo is part of a larger project **GraphRAG** app, in which I show how the GraphRAG pattern works. 
 
@@ -14,16 +14,16 @@ This pipeline is specifically tuned for the **Electronic Music** domain. It capt
 
 This data pipeline orchestrates data ingestion from multiple sources to build a rich dataset of music artists:
 
-- **Wikidata API** (using SPARQL)
-- **Wikipedia API**
-- **Last.fm API**
+- **Wikidata API** (using SPARQL & Action API)
+- **Wikipedia API** (Text Content)
+- **Last.fm API** (Metadata & Tags)
 
 The goal is to prepare unstructured data (Wikipedia articles of musicians, bands, and artists) and split it into chunks enriched with structured metadata. This prepares the data for a hybrid search approach:
 
 1.  **Semantic Search:** Preparing text chunks for vectorization.
 2.  **Deterministic Search:** Using **Neo4j** (Graph Database).
 
-We leverage **Polars** for high-performance data transformation and **Pydantic** for rigorous data validation.
+We leverage **Polars** for high-performance data transformation, **Pydantic** for rigorous data validation, and **Dagster Resources** for clean infrastructure management.
 
 ## Tech Stack
 
@@ -35,6 +35,15 @@ We leverage **Polars** for high-performance data transformation and **Pydantic**
 - **Networking & Utils:** [HTTPX](https://www.python-httpx.org/) (Async), [Structlog](https://www.structlog.org/), [Tqdm](https://tqdm.github.io/)
 - **Language & Tooling:** [Python 3.13+](https://www.python.org/), [uv](https://docs.astral.sh/uv/), [Ruff](https://docs.astral.sh/ruff/), [Ty](https://github.com/astral-sh/ty), [Bandit](https://bandit.readthedocs.io/)
 
+## Project Structure (Clean Architecture)
+
+The project follows a layered architecture to separate business logic from orchestration infrastructure:
+
+*   **`src/data_pipeline/defs/assets/`**: Contains the **Business Logic**. Each file defines a Data Asset (e.g., `artists`, `albums`) and the transformation logic to create it.
+*   **`src/data_pipeline/defs/resources.py`**: Contains **Infrastructure Definitions**. Defines connections to Neo4j and APIs, allowing assets to remain environment-agnostic.
+*   **`src/data_pipeline/defs/io_managers.py`**: Contains the **Storage Logic**. A custom `PolarsJSONLIOManager` handles reading/writing DataFrames to disk, enforcing sparse JSON standards automatically.
+*   **`src/data_pipeline/utils/`**: Contains **Generic Helpers**. Reusable, domain-agnostic utilities for Network I/O, Caching, and Text Processing.
+
 ## Data Architecture
 
 The pipeline transforms raw data from external APIs into two optimized formats: a **Knowledge Graph** (for structural queries) and **Vector-Ready Text Chunks** (for semantic search).
@@ -43,8 +52,8 @@ The pipeline transforms raw data from external APIs into two optimized formats: 
 
 ```mermaid
 graph TD
-    A[Wikidata SPARQL] -->|Raw Artists| B(Artist Index)
-    B -->|Filter & Clean| C{Entity Extraction}
+    A[Wikidata SPARQL] -->|Partitioned by Decade| B(Artist Index Partitions)
+    B -->|Fan-In Merge| C[Artist Index Merged]
     C -->|Fetch Details| D[Wikidata API]
     C -->|Fetch Metadata| E[Last.fm API]
     D --> F[Refined Entities]
@@ -60,8 +69,8 @@ graph TD
 We process Wikipedia articles to create a high-quality corpus for Retrieval-Augmented Generation (RAG).
 
 - **Ingestion:** Fetches full articles for every valid artist found in the Knowledge Graph.
-- **Cleaning:** Removes Wiki-markup, references, and non-text elements.
-- **Chunking:** Splits text into 2048-token windows with 512-token overlap using a recursive character splitter.
+- **Cleaning:** Removes Wiki-markup, references, and non-text elements (using excluded headers).
+- **Chunking:** Splits text into 2048-token windows with 512-token overlap using a recursive character splitter (offloaded to threads for performance).
 - **Enrichment:** Each chunk is "stamped" with global metadata (Genre, Year, Artist Name) to allow for hybrid filtering during retrieval (e.g., "Find chunks about 'Techno' from the '90s").
 
 | Field | Type | Description |
@@ -86,9 +95,9 @@ We construct a deterministic Knowledge Graph to map the relationships between th
 - `(Genre)-[:SUBGENRE_OF]->(Genre)`: Enables hierarchical graph traversal.
 
 **Dataset Statistics:**
-- **Articles:** ~5,337 processed.
-- **Nodes:** ~47,449 (Artists, Albums, Tracks, Genres).
-- **Edges:** ~88,535.
+- **Articles:** ~5,338 processed.
+- **Nodes:** ~47,584 (Artists, Albums, Tracks, Genres).
+- **Edges:** ~88,828.
 
 ### 3. Vector Database (Chroma)
 
@@ -156,8 +165,11 @@ To ensure replicability, follow these steps to set up the environment and depend
     dg dev
     ```
 
-3.  **Access the UI:**
-    Open [http://localhost:3000](http://localhost:3000) in your browser. From here, you can materialize assets and view the pipeline execution graph.
+3.  **Execute the Pipeline:**
+    *   Open [http://localhost:3000](http://localhost:3000) in your browser.
+    *   Navigate to **Assets** -> **Global Asset Graph**.
+    *   Click **"Materialize all"** (top right) to run the full end-to-end pipeline.
+    *   *Note:* The `build_artist_index_by_decade` asset is partitioned. Dagster will automatically launch 10 parallel runs (one for each decade) and then merge the results in `artist_index`.
 
 ### Running Tests
 
@@ -182,6 +194,3 @@ uv run bandit -r src/
 - [Neo4j Graph Database](https://neo4j.com/docs/)
 - [uv Documentation](https://docs.astral.sh/uv/)
 - [Nomic AI Documentation](https://docs.nomic.ai/)
-
-
-

@@ -1,5 +1,5 @@
 # -----------------------------------------------------------
-# Unit Tests for extract_tracks
+# Unit Tests for tracks
 # Dagster Data pipeline for Structured and Unstructured Data
 #
 # (C) 2025-2026 Juan-Francisco Reyes, Cottbus, Germany
@@ -23,14 +23,14 @@ async def test_extract_tracks(
     mock_fetch_sparql
 ):
     """
-    Test the extract_tracks asset.
+    Test the tracks asset.
     """
     # Setup mock settings
     mock_settings.WIKIDATA_ACTION_BATCH_SIZE = 10
     mock_settings.WIKIDATA_SPARQL_REQUEST_TIMEOUT = 10
     mock_settings.WIKIDATA_CONCURRENT_REQUESTS = 2
 
-    # Mock Input DataFrame (extract_albums)
+    # Mock Input DataFrame (albums)
     mock_albums_df = pl.DataFrame({
         "id": ["Q100", "Q200"]
     })
@@ -84,7 +84,7 @@ async def test_extract_tracks(
 @pytest.mark.asyncio
 async def test_extract_tracks_empty_albums():
     """
-    Test extract_tracks with empty albums DataFrame.
+    Test tracks with empty albums DataFrame.
     """
     # Mock Empty DataFrame
     mock_albums_df = pl.DataFrame({"id": []})

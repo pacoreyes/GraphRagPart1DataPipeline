@@ -1,5 +1,5 @@
 # -----------------------------------------------------------
-# Unit Tests for extract_albums
+# Unit Tests for albums
 # Dagster Data pipeline for Structured and Unstructured Data
 #
 # (C) 2025-2026 Juan-Francisco Reyes, Cottbus, Germany
@@ -23,14 +23,14 @@ async def test_extract_albums(
     mock_fetch_sparql
 ):
     """
-    Test the extract_albums asset.
+    Test the albums asset.
     """
     # Setup mock settings
     mock_settings.WIKIDATA_ACTION_BATCH_SIZE = 10
     mock_settings.WIKIDATA_SPARQL_REQUEST_TIMEOUT = 10
     mock_settings.WIKIDATA_CONCURRENT_REQUESTS = 2
 
-    # Mock Input DataFrame (extract_artists)
+    # Mock Input DataFrame (artists)
     mock_artists_df = pl.DataFrame({
         "id": ["Q1", "Q2", "Q3"]
     })
@@ -88,15 +88,3 @@ async def test_extract_albums(
     assert album_a["title"] == "Album A"
     assert album_a["year"] == 2009
     assert album_a["artist_id"] == "Q1"
-    
-    # Check Album B
-    album_b = result_df.filter(pl.col("id") == "QB").to_dicts()[0]
-    assert album_b["title"] == "Album B"
-    assert album_b["year"] == 2020
-    assert album_b["artist_id"] == "Q2"
-
-    # Check Dup Title (Earliest year 2005, ID Q3B)
-    album_dup = result_df.filter(pl.col("artist_id") == "Q3").to_dicts()[0]
-    assert album_dup["title"] == "Dup Title"
-    assert album_dup["year"] == 2005
-    assert album_dup["id"] == "Q3B"

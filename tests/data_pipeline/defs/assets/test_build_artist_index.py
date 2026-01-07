@@ -1,5 +1,5 @@
 # -----------------------------------------------------------
-# Unit Tests for build_artist_index
+# Unit Tests for artist_index
 # Dagster Data pipeline for Structured and Unstructured Data
 #
 # (C) 2025-2026 Juan-Francisco Reyes, Cottbus, Germany
@@ -38,7 +38,7 @@ async def test_build_artist_index_by_decade(mock_execute):
     mock_execute.assert_called_once()
 
 @patch("data_pipeline.defs.assets.build_artist_index.deduplicate_by_priority")
-def test_build_artist_index_merge_and_clean(mock_dedup):
+def test_artist_index_merge_and_clean(mock_dedup):
     """Test the merge and deduplication asset."""
     # Mock Input (Partitions)
     mock_partitions = {

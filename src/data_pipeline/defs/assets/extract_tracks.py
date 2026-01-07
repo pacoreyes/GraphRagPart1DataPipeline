@@ -28,13 +28,13 @@ from data_pipeline.defs.resources import WikidataResource
 
 
 @asset(
-    name="extract_tracks",
+    name="tracks",
     description="Extract Tracks dataset from the Albums list using Wikidata SPARQL.",
 )
 async def extract_tracks(
     context: AssetExecutionContext, 
     wikidata: WikidataResource, 
-    extract_albums: pl.DataFrame
+    albums: pl.DataFrame
 ) -> pl.DataFrame:
     """
     Retrieves all tracks for each album in the albums dataset from Wikidata.
@@ -43,7 +43,7 @@ async def extract_tracks(
     context.log.info("Starting track extraction from albums dataset.")
 
     # 1. Get QIDs from input DataFrame
-    album_qids = extract_albums["id"].to_list()
+    album_qids = albums["id"].to_list()
 
     if not album_qids:
         context.log.warning("No albums found. Returning empty DataFrame.")
@@ -109,16 +109,16 @@ async def extract_tracks(
 
     # 4. Collect results (Deduplicate globally by ID + AlbumID)
     context.log.info("Collecting and deduplicating tracks.")
-    tracks = [
+    tracks_list = [
         msgspec.to_builtins(track) 
         async for track in deduplicate_stream(track_stream, key_attr=["id", "album_id"])
     ]
 
-    context.log.info(f"Successfully fetched {len(tracks)} tracks.")
+    context.log.info(f"Successfully fetched {len(tracks_list)} tracks.")
     
     context.add_output_metadata({
-        "track_count": len(tracks),
+        "track_count": len(tracks_list),
         "album_count": len(album_qids)
     })
     
-    return pl.DataFrame(tracks)
+    return pl.DataFrame(tracks_list)

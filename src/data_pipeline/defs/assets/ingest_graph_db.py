@@ -9,7 +9,6 @@
 
 import polars as pl
 from dagster import AssetExecutionContext, MaterializeResult, asset
-from neo4j import Driver
 
 from data_pipeline.settings import settings
 from data_pipeline.utils.graph_db_helpers import (
@@ -24,13 +23,13 @@ from data_pipeline.defs.resources import Neo4jResource
     name="ingest_graph_db",
     description="Ingests in Neo4j Artists, Albums, Tracks, and Genres.",
 )
-def load_graph_db(
+def ingest_graph_db(
     context: AssetExecutionContext, 
     neo4j: Neo4jResource,
-    extract_artists: pl.DataFrame,
-    extract_albums: pl.DataFrame,
-    extract_tracks: pl.DataFrame,
-    extract_genres: pl.DataFrame
+    artists: pl.DataFrame,
+    albums: pl.DataFrame,
+    tracks: pl.DataFrame,
+    genres: pl.DataFrame
 ) -> MaterializeResult:
     """
     Dagster asset that ingests music data into the Neo4j database.
@@ -55,8 +54,8 @@ def load_graph_db(
         parent_ids: row.parent_ids
     });
     """
-    if not extract_genres.is_empty():
-        for batch_df in extract_genres.iter_slices(n=batch_size):
+    if not genres.is_empty():
+        for batch_df in genres.iter_slices(n_rows=batch_size):
             batch_data = batch_df.to_dicts()
             execute_cypher(driver, genre_query, {"batch": batch_data})
             genre_count += len(batch_data)
@@ -76,8 +75,8 @@ def load_graph_db(
         similar_artists: row.similar_artists
     });
     """
-    if not extract_artists.is_empty():
-        for batch_df in extract_artists.iter_slices(n=batch_size):
+    if not artists.is_empty():
+        for batch_df in artists.iter_slices(n_rows=batch_size):
             batch_data = batch_df.to_dicts()
             execute_cypher(driver, artist_query, {"batch": batch_data})
             artist_count += len(batch_data)
@@ -95,8 +94,8 @@ def load_graph_db(
         genres: row.genres
     });
     """
-    if not extract_albums.is_empty():
-        for batch_df in extract_albums.iter_slices(n=batch_size):
+    if not albums.is_empty():
+        for batch_df in albums.iter_slices(n_rows=batch_size):
             batch_data = batch_df.to_dicts()
             execute_cypher(driver, album_query, {"batch": batch_data})
             album_count += len(batch_data)
@@ -113,8 +112,8 @@ def load_graph_db(
         genres: row.genres
     });
     """
-    if not extract_tracks.is_empty():
-        for batch_df in extract_tracks.iter_slices(n=batch_size):
+    if not tracks.is_empty():
+        for batch_df in tracks.iter_slices(n_rows=batch_size):
             batch_data = batch_df.to_dicts()
             execute_cypher(driver, track_query, {"batch": batch_data})
             track_count += len(batch_data)
@@ -196,10 +195,10 @@ def load_graph_db(
     return MaterializeResult(
         metadata={
             "total_records_input": {
-                "genres": len(extract_genres),
-                "artists": len(extract_artists),
-                "albums": len(extract_albums),
-                "tracks": len(extract_tracks)
+                "genres": len(genres),
+                "artists": len(artists),
+                "albums": len(albums),
+                "tracks": len(tracks)
             },
             "nodes_ingested": {
                 "genres": genre_count,
