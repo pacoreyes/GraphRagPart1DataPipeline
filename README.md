@@ -56,7 +56,7 @@ graph TD
     B -->|Fan-In Merge| C[Artist Index Merged]
     C -->|Fetch Details| D[Wikidata API]
     C -->|Fetch Metadata| E[Last.fm API]
-    D --> F[Refined Entities (Artists, Albums, Tracks, Genres)]
+    D --> F[Refined Entities]
     E --> F
     F -->|Nodes & Edges| G[(Neo4j Graph DB)]
     F -->|Wikipedia URLs| H[Wikipedia API]
