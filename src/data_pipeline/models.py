@@ -7,13 +7,6 @@
 # email pacoreyes@protonmail.com
 # -----------------------------------------------------------
 
-"""
-Domain models for the data pipeline.
-
-We use `msgspec.Struct` for high-performance serialization and deserialization,
-which is ideal for data-intensive pipelines.
-"""
-
 from typing import Optional
 
 import msgspec

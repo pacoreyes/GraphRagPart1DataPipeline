@@ -9,7 +9,7 @@
 
 import re
 import unicodedata
-from typing import Union, Optional, overload, List
+from typing import Union, Optional, overload
 
 import ftfy
 import polars as pl
@@ -23,7 +23,7 @@ def normalize_and_clean_text(text_or_expr: str) -> str: ...
 def normalize_and_clean_text(text_or_expr: pl.Expr) -> pl.Expr: ...
 
 
-def clean_wikipedia_text(text: str, exclusion_patterns: Optional[List[str]] = None) -> str:
+def clean_wikipedia_text(text: str, exclusion_patterns: Optional[list[str]] = None) -> str:
     """
     Generic Wikipedia text cleaner.
     Truncates text at the first occurrence of any provided exclusion pattern.

@@ -7,12 +7,8 @@
 # email pacoreyes@protonmail.com
 # -----------------------------------------------------------
 
-"""
-Wikidata helpers (Infrastructure Layer)
-Generic functions for interacting with Wikidata SPARQL and Action APIs.
-"""
 import asyncio
-from typing import Any, Callable, Optional, Dict, List
+from typing import Any, Callable, Optional
 
 import httpx
 import msgspec
@@ -121,9 +117,9 @@ def get_sparql_binding_value(data: dict[str, Any], key: str) -> Any:
 
 async def async_fetch_wikidata_entities_batch(
     context: AssetExecutionContext,
-    qids: List[str],
+    qids: list[str],
     client: Optional[httpx.AsyncClient] = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Fetches entity data for a batch of QIDs from the Wikidata API (wbgetentities).
     Implements a local file cache (one JSON per QID).
@@ -135,7 +131,7 @@ async def async_fetch_wikidata_entities_batch(
     to_fetch = []
 
     # 1. Check Cache
-    async def check_cache(qid: str) -> Optional[Dict[str, Any]]:
+    async def check_cache(qid: str) -> Optional[dict[str, Any]]:
         cache_file = WIKIDATA_CACHE_DIR / f"{qid}.json"
         if await asyncio.to_thread(cache_file.exists):
             try:
@@ -164,9 +160,9 @@ async def async_fetch_wikidata_entities_batch(
 
     # 2. Fetch missing from API
     chunk_size = settings.WIKIDATA_ACTION_BATCH_SIZE
-    chunks = [to_fetch[i : i + chunk_size] for i in range(0, len(to_fetch), chunk_size)]
+    chunks = [to_fetch[i: i + chunk_size] for i in range(0, len(to_fetch), chunk_size)]
 
-    async def fetch_and_cache_chunk(chunk: List[str]) -> Dict[str, Any]:
+    async def fetch_and_cache_chunk(chunk: list[str]) -> dict[str, Any]:
         params = {
             "action": "wbgetentities",
             "ids": "|".join(chunk),
@@ -225,9 +221,9 @@ async def async_fetch_wikidata_entities_batch(
 
 async def async_resolve_qids_to_labels(
     context: AssetExecutionContext,
-    qids: List[str],
+    qids: list[str],
     client: Optional[httpx.AsyncClient] = None,
-) -> Dict[str, str]:
+) -> dict[str, str]:
     """Resolves a list of QIDs to their English labels."""
     entities = await async_fetch_wikidata_entities_batch(context, qids, client)
     labels = {}
@@ -238,18 +234,18 @@ async def async_resolve_qids_to_labels(
     return labels
 
 
-def extract_wikidata_label(entity_data: Dict[str, Any], lang: str = "en") -> Optional[str]:
+def extract_wikidata_label(entity_data: dict[str, Any], lang: str = "en") -> Optional[str]:
     """Extracts the label for a given language."""
     return ((entity_data.get("labels") or {}).get(lang) or {}).get("value")
 
 
-def extract_wikidata_aliases(entity_data: Dict[str, Any], lang: str = "en") -> List[str]:
+def extract_wikidata_aliases(entity_data: dict[str, Any], lang: str = "en") -> list[str]:
     """Extracts aliases for a given language."""
     aliases = (entity_data.get("aliases") or {}).get(lang) or []
     return [a["value"] for a in aliases]
 
 
-def extract_wikidata_wikipedia_url(entity_data: Dict[str, Any], lang: str = "en") -> Optional[str]:
+def extract_wikidata_wikipedia_url(entity_data: dict[str, Any], lang: str = "en") -> Optional[str]:
     """Extracts the Wikipedia URL for a given language (e.g., 'enwiki')."""
     wiki_key = f"{lang}wiki"
     sitelinks = entity_data.get("sitelinks", {})
@@ -262,7 +258,7 @@ def extract_wikidata_wikipedia_url(entity_data: Dict[str, Any], lang: str = "en"
 
 
 def extract_wikidata_claim_value(
-    entity_data: Dict[str, Any], property_id: str
+    entity_data: dict[str, Any], property_id: str
 ) -> Optional[Any]:
     """
     Extracts the first claim value for a property (e.g., 'P495').
@@ -289,8 +285,8 @@ def extract_wikidata_claim_value(
 
 
 def extract_wikidata_claim_ids(
-    entity_data: Dict[str, Any], property_id: str
-) -> List[str]:
+    entity_data: dict[str, Any], property_id: str
+) -> list[str]:
     """Extracts all claim values (IDs) for a property."""
     claims = entity_data.get("claims", {})
     if property_id not in claims:

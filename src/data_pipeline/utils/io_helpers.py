@@ -7,11 +7,8 @@
 # email pacoreyes@protonmail.com
 # -----------------------------------------------------------
 
-import shutil
-from pathlib import Path
-from typing import Any, IO, Iterable, AsyncIterable, TypeVar, Union, Set, cast
+from typing import Any, Iterable, AsyncIterable, TypeVar, Union
 
-import msgspec
 
 T = TypeVar("T")
 
@@ -31,7 +28,7 @@ async def deduplicate_stream(
     Yields:
         Unique items.
     """
-    seen_ids: Set[Any] = set()
+    seen_ids: set[Any] = set()
     is_composite = isinstance(key_attr, list)
     
     # Helper to extract key value

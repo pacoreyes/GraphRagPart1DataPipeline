@@ -115,142 +115,44 @@ async def run_tasks_concurrently(
 
 
 async def yield_batches_concurrently(
-
-
     items: list[T],
-
-
     batch_size: int,
-
-
     processor_fn: Callable[[list[T], httpx.AsyncClient], Coroutine[Any, Any, list[R]]],
-
-
     concurrency_limit: int,
-
-
     description: str = "Processing Batches",
-
-
     timeout: int = 60,
-
-
     client: Optional[httpx.AsyncClient] = None,
-
-
 ) -> AsyncIterable[R]:
-
-
     """
-
-
     Processes a list of items in batches concurrently and yields results as they complete.
-
-
-    
-
-
     Args:
-
-
         items: List of items to process.
-
-
         batch_size: Number of items per batch.
-
-
         processor_fn: Async function that takes a batch and a client, returning a list of results.
-
-
         concurrency_limit: Max number of concurrent batches.
-
-
         description: Progress bar description.
-
-
         timeout: Timeout for the httpx client.
-
-
         client: Optional existing client to reuse.
-
-
-        
-
-
     Yields:
-
-
         Individual result items from the processed batches.
-
-
     """
-
-
     chunks = [items[i: i + batch_size] for i in range(0, len(items), batch_size)]
-
-
     semaphore = asyncio.Semaphore(concurrency_limit)
-
-
-    
-
-
     should_close_client = False
-
-
     if client is None:
-
-
         client = httpx.AsyncClient(timeout=timeout)
-
-
         should_close_client = True
-
-
-        
-
-
     try:
-
-
         async def worker(batch: list[T]) -> list[R]:
-
-
             async with semaphore:
-
-
                 return await processor_fn(batch, client)
-
-
-        
-
-
         tasks = [worker(chunk) for chunk in chunks]
 
-
-        
-
-
         # Use tqdm to wrap the as_completed iterator
-
-
         for future in tqdm(asyncio.as_completed(tasks), total=len(tasks), desc=description):
-
-
             batch_results = await future
-
-
             for res in batch_results:
-
-
                 yield res
-
-
     finally:
-
-
         if should_close_client:
-
-
             await client.aclose()
-

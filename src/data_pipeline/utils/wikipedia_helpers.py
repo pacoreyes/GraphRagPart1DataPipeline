@@ -9,10 +9,8 @@
 
 import asyncio
 import hashlib
-import re
 import urllib.parse
-from pathlib import Path
-from typing import Optional, List
+from typing import Optional
 
 import httpx
 from dagster import AssetExecutionContext
@@ -21,23 +19,6 @@ from data_pipeline.settings import settings
 from data_pipeline.utils.network_helpers import make_async_request_with_retries
 
 WIKIPEDIA_CACHE_DIR = settings.wikipedia_cache_dirpath
-
-
-def get_cache_key(text: str) -> str:
-    """Creates a SHA256 hash of a string to use as a cache key."""
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-async def _async_save_text_cache(cache_dir: Path, key: str, content: str) -> None:
-    """Helper function to cache text content asynchronously."""
-    cache_file = cache_dir / f"{key}.txt"
-    await asyncio.to_thread(cache_dir.mkdir, parents=True, exist_ok=True)
-
-    def write_file():
-        with open(cache_file, "w", encoding="utf-8") as f:
-            f.write(content)
-
-    await asyncio.to_thread(write_file)
 
 
 async def async_fetch_wikipedia_article(
@@ -50,9 +31,12 @@ async def async_fetch_wikipedia_article(
     Fetches the raw plain text of a Wikipedia article by its title, with caching.
     """
     clean_title = urllib.parse.unquote(title).replace("_", " ")
-    cache_key = qid if qid else get_cache_key(clean_title)
+    
+    # Generate cache key (SHA256 of title if QID not provided)
+    cache_key = qid if qid else hashlib.sha256(clean_title.encode("utf-8")).hexdigest()
     cache_file = WIKIPEDIA_CACHE_DIR / f"{cache_key}.txt"
     
+    # 1. Check Cache
     if await asyncio.to_thread(cache_file.exists):
         try:
             def read_file():
@@ -64,6 +48,7 @@ async def async_fetch_wikipedia_article(
         except OSError:
             pass
 
+    # 2. Fetch from API
     params = {
         "action": "query",
         "format": "json",
@@ -92,7 +77,14 @@ async def async_fetch_wikipedia_article(
             
             extract = page_data.get("extract")
             if extract:
-                await _async_save_text_cache(WIKIPEDIA_CACHE_DIR, cache_key, extract)
+                # 3. Save to Cache
+                await asyncio.to_thread(WIKIPEDIA_CACHE_DIR.mkdir, parents=True, exist_ok=True)
+
+                def write_file():
+                    with open(cache_file, "w", encoding="utf-8") as f:
+                        f.write(extract)
+
+                await asyncio.to_thread(write_file)
                 return extract
             
     except (httpx.HTTPError, ValueError):

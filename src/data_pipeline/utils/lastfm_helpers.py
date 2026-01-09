@@ -14,7 +14,7 @@ Generic functions for interacting with Last.fm API with caching.
 import asyncio
 import hashlib
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 import httpx
 from dagster import AssetExecutionContext
@@ -47,11 +47,11 @@ async def _async_cache_lastfm_data(key: str, data: dict[str, Any]) -> None:
 
 async def async_fetch_lastfm_data_with_cache(
     context: AssetExecutionContext,
-    params: Dict[str, Any],
+    params: dict[str, Any],
     cache_key_source: str,
     api_key: str,
     client: Optional[httpx.AsyncClient] = None,
-) -> Optional[Dict[str, Any]]:
+) -> Optional[dict[str, Any]]:
     """
     Generic Last.fm API fetcher with local file caching.
     """

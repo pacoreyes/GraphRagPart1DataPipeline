@@ -10,7 +10,8 @@
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
 from pathlib import Path
-from data_pipeline.utils.wikipedia_helpers import async_fetch_wikipedia_article, clean_wikipedia_text, WIKIPEDIA_CACHE_DIR
+from data_pipeline.utils.wikipedia_helpers import async_fetch_wikipedia_article, WIKIPEDIA_CACHE_DIR
+from data_pipeline.utils.text_transformation_helpers import clean_wikipedia_text
 
 @pytest.mark.asyncio
 async def test_async_fetch_wikipedia_article_cache_hit():
@@ -91,7 +92,7 @@ def test_clean_wikipedia_text_removes_discography():
     == References ==
     Ref 1
     """
-    cleaned = clean_wikipedia_text(raw_text)
+    cleaned = clean_wikipedia_text(raw_text, exclusion_patterns=["Discography", "References"])
     
     assert "Nick Warren is a DJ." in cleaned
     assert "== Biography ==" in cleaned
