@@ -73,36 +73,6 @@ def normalize_and_clean_text(text_or_expr: Union[str, pl.Expr]) -> Union[str, pl
         raise TypeError(f"Expected str or pl.Expr, got {type(text_or_expr)}")
 
 
-def clean_text(df: pl.DataFrame, col_name: str) -> pl.DataFrame:
-    return df.with_columns(
-        pl.col(col_name)
-        # 1. Manual replacements (escaped quotes & newlines)
-        .str.replace_all(r'\\"', '"')  # Fix escaped quotes
-        .str.replace_all(r"[\n\r]+", " ")  # Replace newlines with space
-        # 2. Cleantext equivalent (extra_spaces=True)
-        .str.replace_all(r"\s+", " ")  # Squash multiple spaces
-        .str.strip_chars()  # Remove leading/trailing space
-    )
-
-
-def clean_text_string(text: str) -> str:
-    """
-    Applies text cleaning operations to a single string.
-    Matches the logic of the `clean_text` DataFrame function.
-    """
-    if not isinstance(text, str):
-        return text  # Or raise an error, depending on desired behavior
-
-    # 1. Manual replacements (escaped quotes & newlines)
-    text = text.replace('\\"', '"')  # Fix escaped quotes
-    text = re.sub(r"[\n\r]+", " ", text)  # Replace newlines with space
-
-    # 2. Cleantext equivalent (extra_spaces=True)
-    text = re.sub(r"\s+", " ", text)  # Squash multiple spaces
-    text = text.strip()  # Remove leading/trailing space
-    return text
-
-
 def extract_unique_ids_from_column(df: pl.DataFrame, col_name: str) -> list[str]:
     """
     Explodes a list column and extracts unique string values using Polars expressions.

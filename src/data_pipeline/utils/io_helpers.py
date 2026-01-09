@@ -16,74 +16,6 @@ import msgspec
 T = TypeVar("T")
 
 
-class JSONLWriter:
-    """
-    A context manager for writing JSONL files efficiently using msgspec.
-    """
-
-    def __init__(self, path: Path, mode: str = "wb"):
-        self.path = path
-        self.mode = mode
-        self.encoder = msgspec.json.Encoder()
-        self._file: IO[bytes] | None = None
-
-    def __enter__(self) -> "JSONLWriter":
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._file = open(self.path, self.mode)
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        if self._file:
-            self._file.close()
-
-    def write(self, record: Any) -> None:
-        """
-        Encodes the record as JSON and writes it to the file followed by a newline.
-        """
-        if self._file:
-            self._file.write(self.encoder.encode(record))
-            self._file.write(b"\n")
-
-
-def merge_jsonl_files(input_paths: list[Path], output_path: Path) -> None:
-    """
-    Merges multiple JSONL files into a single file efficiently.
-
-    Args:
-        input_paths (list[Path]): A list of Path objects for the files to merge.
-        output_path (Path): The Path object for the destination file.
-    """
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "wb") as outfile:
-        for input_path in input_paths:
-            if input_path.exists():
-                with open(input_path, "rb") as infile:
-                    shutil.copyfileobj(cast(Any, infile), cast(Any, outfile))
-
-
-async def stream_to_jsonl(
-    items: Union[Iterable[T], AsyncIterable[T]],
-    output_path: Path,
-    append: bool = False
-) -> None:
-    """
-    Consumes an async (or sync) iterable and writes items to disk immediately.
-    
-    Args:
-        items: An iterable or async iterable of items to write.
-        output_path: The destination file path.
-        append: Whether to append to the file instead of overwriting.
-    """
-    mode = "ab" if append else "wb"
-    with JSONLWriter(output_path, mode=mode) as writer:
-        if isinstance(items, AsyncIterable):
-            async for item in items:
-                writer.write(item)
-        else:
-            for item in items:
-                writer.write(item)
-
-
 async def deduplicate_stream(
     items: Union[Iterable[T], AsyncIterable[T]],
     key_attr: Union[str, list[str]] = "id"
@@ -134,29 +66,3 @@ async def deduplicate_stream(
             if unique_id not in seen_ids:
                 seen_ids.add(unique_id)
                 yield item
-
-
-def read_items_from_jsonl(path: Path, model: type[T]) -> Iterable[T]:
-    """
-    Reads a JSONL file and yields items as instances of the specified msgspec model.
-    This is a generator that streams the file line by line.
-
-    Args:
-        path (Path): Path to the JSONL file.
-        model (type[T]): The msgspec.Struct class to decode into.
-
-    Yields:
-        T: Instances of the model.
-    """
-    if not path.exists():
-        return
-
-    decoder = msgspec.json.Decoder(model)
-    with open(path, "rb") as f:
-        for line in f:
-            try:
-                yield decoder.decode(line)
-            except msgspec.DecodeError:
-                # In a robust pipeline, you might log this or handle it, 
-                # but for now we skip malformed lines to prevent crashing.
-                continue

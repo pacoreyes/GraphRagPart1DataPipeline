@@ -114,62 +114,6 @@ async def run_tasks_concurrently(
     return await tqdm_asyncio.gather(*tasks, desc=description)
 
 
-async def process_batches_concurrently(
-    items: list[T],
-    batch_size: int,
-    processor_fn: Callable[[list[T], httpx.AsyncClient], Coroutine[Any, Any, list[R]]],
-    concurrency_limit: int,
-    description: str = "Processing Batches",
-    timeout: int = 60,
-    client: Optional[httpx.AsyncClient] = None,
-) -> list[R]:
-    """
-    Processes a list of items in batches concurrently using a shared httpx.AsyncClient.
-
-    Args:
-        items: List of items to process.
-        batch_size: Number of items per batch.
-        processor_fn: Async function that takes a batch and a client, returning a list of results.
-        concurrency_limit: Max number of concurrent batches.
-        description: Progress bar description.
-        timeout: Timeout for the httpx client.
-        client: Optional existing client to reuse.
-
-    Returns:
-        Flattened list of results.
-    """
-    # Create chunks
-    chunks = [items[i: i + batch_size] for i in range(0, len(items), batch_size)]
-    all_results: list[R] = []
-
-    should_close_client = False
-    if client is None:
-        client = httpx.AsyncClient(timeout=timeout)
-        should_close_client = True
-
-    try:
-        # Define a worker that binds the client
-        async def worker(batch: list[T]) -> list[R]:
-            return await processor_fn(batch, client)
-
-        # Run batches concurrently
-        results_batches = await run_tasks_concurrently(
-            items=chunks,
-            processor=worker,
-            concurrency_limit=concurrency_limit,
-            description=description,
-        )
-
-        for batch_res in results_batches:
-            all_results.extend(batch_res)
-
-    finally:
-        if should_close_client:
-            await client.aclose()
-
-    return all_results
-
-
 async def yield_batches_concurrently(
 
 

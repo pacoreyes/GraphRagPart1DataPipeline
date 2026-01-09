@@ -27,30 +27,6 @@ from data_pipeline.utils.network_helpers import (
 WIKIDATA_CACHE_DIR = settings.wikidata_cache_dirpath
 
 
-def execute_sparql_extraction(
-    context: AssetExecutionContext,
-    get_query_function: Callable[..., str],
-    record_processor: Callable[[dict[str, Any]], Optional[dict[str, Any]]],
-    label: str,
-    client: Optional[httpx.AsyncClient] = None,
-    **query_params: Any,
-) -> list[dict[str, Any]]:
-    """
-    Orchestrates fetching and processing data from a SPARQL endpoint.
-    Returns a list of processed records.
-    """
-    return asyncio.run(
-        run_extraction_pipeline(
-            context=context,
-            get_query_function=get_query_function,
-            record_processor=record_processor,
-            label=label,
-            client=client,
-            **query_params,
-        )
-    )
-
-
 async def run_extraction_pipeline(
     context: AssetExecutionContext,
     get_query_function: Callable[..., str],
