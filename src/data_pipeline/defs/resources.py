@@ -52,8 +52,8 @@ class WikidataResource(ConfigurableResource):
     """
     Resource for making HTTP requests to Wikidata (SPARQL).
     """
-    user_agent: str = "DagsterDataPipeline/1.0 (mailto:pacoreyes@protonmail.com)"
-    timeout: int = 60
+    user_agent: str
+    timeout: int
 
     @asynccontextmanager
     async def yield_for_execution(self, context) -> AsyncGenerator[httpx.AsyncClient, None]:
@@ -74,7 +74,10 @@ resource_defs: dict[str, Any] = {
         nomic_api_key=EnvVar("NOMIC_API_KEY"),
     ),
     "neo4j": Neo4jResource(),
-    "wikidata": WikidataResource(),
+    "wikidata": WikidataResource(
+        user_agent=settings.USER_AGENT,
+        timeout=settings.WIKIDATA_SPARQL_REQUEST_TIMEOUT
+    ),
     "io_manager": PolarsJSONLIOManager(base_dir=str(settings.datasets_dirpath))
 }
 
