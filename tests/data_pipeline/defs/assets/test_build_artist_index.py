@@ -21,14 +21,22 @@ from data_pipeline.defs.assets.build_artist_index import (
 @patch("data_pipeline.defs.assets.build_artist_index.run_extraction_pipeline")
 async def test_build_artist_index_by_decade(mock_execute):
     """Test the extraction asset for a specific decade."""
+    from contextlib import asynccontextmanager
+    
     # Create a mock context with a partition key
     context = build_asset_context(partition_key="1960s")
     mock_client = MagicMock(spec=httpx.AsyncClient)
     
+    mock_wikidata = MagicMock()
+    @asynccontextmanager
+    async def mock_yield(context):
+        yield mock_client
+    mock_wikidata.yield_for_execution = mock_yield
+    
     mock_execute.return_value = [{"artist_uri": "http://q1", "name": "Artist 1", "start_date": "1965"}]
     
     # Execute the asset
-    result_df = await build_artist_index_by_decade(context, mock_client)
+    result_df = await build_artist_index_by_decade(context, mock_wikidata)
     
     assert isinstance(result_df, pl.DataFrame)
     assert len(result_df) == 1

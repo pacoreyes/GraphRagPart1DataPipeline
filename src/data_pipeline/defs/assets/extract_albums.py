@@ -143,7 +143,7 @@ async def extract_albums(
                 title=data["title"],
                 year=year,
                 artist_id=artist_id,
-                genres=list(data["genres"]),
+                genres=list(data["genres"]) if data["genres"] else None,
             )
             
             if title_key not in final_map:

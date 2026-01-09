@@ -120,7 +120,7 @@ async def extract_tracks(
                 id=tid,
                 title=data["title"],
                 album_id=aid,
-                genres=list(data["genres"]),
+                genres=list(data["genres"]) if data["genres"] else None,
             )
             for (tid, aid), data in track_map.items()
         ]

@@ -118,8 +118,8 @@ async def extract_genres(
             batch_results.append(Genre(
                 id=genre_id, 
                 name=label, 
-                aliases=aliases, 
-                parent_ids=parent_ids
+                aliases=aliases if aliases else None,
+                parent_ids=parent_ids if parent_ids else None,
             ))
 
         return batch_results

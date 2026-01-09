@@ -60,7 +60,11 @@ async def extract_wikipedia_articles(
     context.log.info("Loading validated artists, genres, and artist index from inputs.")
 
     # 1. Prepare Mappings
-    genres_map = dict(zip(genres["id"].to_list(), genres["name"].to_list()))
+    genres_map: Dict[str, str] = {
+        str(k): str(v) 
+        for k, v in zip(genres["id"].to_list(), genres["name"].to_list()) 
+        if k is not None and v is not None
+    }
     inception_year_map = {}
     
     def extract_qid(uri: str) -> str:
@@ -100,8 +104,8 @@ async def extract_wikipedia_articles(
         client: httpx.AsyncClient
     ) -> List[Article]:
         
-        artist_name = artist_row.get("name")
-        qid = artist_row.get("id")
+        artist_name = str(artist_row.get("name") or "")
+        qid = str(artist_row.get("id") or "")
         
         if not wiki_url:
             return []
@@ -122,7 +126,7 @@ async def extract_wikipedia_articles(
         
         total_chunks = len(chunks)
         genre_ids = artist_row.get("genres") or []
-        genre_names = [genres_map.get(gid) for gid in genre_ids if gid in genres_map]
+        genre_names = [genres_map[gid] for gid in genre_ids if gid in genres_map]
         year = inception_year_map.get(qid)
         
         results = []
@@ -131,7 +135,7 @@ async def extract_wikipedia_articles(
             meta = ArticleMetadata(
                 title=title.replace("_", " "),
                 artist_name=artist_name,
-                genres=genre_names,
+                genres=genre_names if genre_names else None,
                 inception_year=year,
                 wikipedia_url=wiki_url,
                 wikidata_uri=f"{settings.WIKIDATA_CONCEPT_BASE_URI_PREFIX}{qid}",
@@ -145,12 +149,12 @@ async def extract_wikipedia_articles(
     async def process_batch_wrapper(
         batch: list[Dict[str, Any]], client: httpx.AsyncClient
     ) -> list[Article]:
-        qids = [row["id"] for row in batch]
+        qids = [str(row.get("id") or "") for row in batch]
         entities = await async_fetch_wikidata_entities_batch(context, qids, client)
         
         tasks = []
         for row in batch:
-            qid = row.get("id")
+            qid = str(row.get("id") or "")
             entity_data = entities.get(qid)
             if not entity_data:
                 continue

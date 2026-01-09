@@ -70,12 +70,20 @@ async def test_extract_albums(
         }
     ]
 
+    from contextlib import asynccontextmanager
+
     # Mock Context and Resource
     context = build_asset_context()
     mock_client = MagicMock(spec=httpx.AsyncClient)
 
+    mock_wikidata = MagicMock()
+    @asynccontextmanager
+    async def mock_yield(context):
+        yield mock_client
+    mock_wikidata.yield_for_execution = mock_yield
+
     # Execution
-    result_df = await extract_albums(context, mock_client, mock_artists_df)
+    result_df = await extract_albums(context, mock_wikidata, mock_artists_df)
 
     # Assertions
     assert isinstance(result_df, pl.DataFrame)

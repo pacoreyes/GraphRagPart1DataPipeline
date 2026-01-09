@@ -63,12 +63,20 @@ async def test_extract_tracks(
         }
     ]
 
+    from contextlib import asynccontextmanager
+
     # Mock Context and Resource
     context = build_asset_context()
     mock_client = MagicMock(spec=httpx.AsyncClient)
 
+    mock_wikidata = MagicMock()
+    @asynccontextmanager
+    async def mock_yield(context):
+        yield mock_client
+    mock_wikidata.yield_for_execution = mock_yield
+
     # Execution
-    result_df = await extract_tracks(context, mock_client, mock_albums_df)
+    result_df = await extract_tracks(context, mock_wikidata, mock_albums_df)
 
     # Assertions
     assert isinstance(result_df, pl.DataFrame)
@@ -86,13 +94,21 @@ async def test_extract_tracks_empty_albums():
     """
     Test tracks with empty albums DataFrame.
     """
+    from contextlib import asynccontextmanager
+    
     # Mock Empty DataFrame
     mock_albums_df = pl.DataFrame({"id": []})
     
     context = build_asset_context()
     mock_client = MagicMock(spec=httpx.AsyncClient)
     
-    result_df = await extract_tracks(context, mock_client, mock_albums_df)
+    mock_wikidata = MagicMock()
+    @asynccontextmanager
+    async def mock_yield(context):
+        yield mock_client
+    mock_wikidata.yield_for_execution = mock_yield
+    
+    result_df = await extract_tracks(context, mock_wikidata, mock_albums_df)
     
     # Should return empty DataFrame
     assert len(result_df) == 0

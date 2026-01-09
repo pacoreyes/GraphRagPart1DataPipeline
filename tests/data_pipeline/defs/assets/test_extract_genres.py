@@ -45,9 +45,17 @@ async def test_extract_genres(
 
     # Unique Genres Expected: Q101, Q102, Q103, Q104
     
+    from contextlib import asynccontextmanager
+
     # Mock Context and Resource
     context = build_asset_context()
     mock_client = MagicMock(spec=httpx.AsyncClient)
+
+    mock_wikidata = MagicMock()
+    @asynccontextmanager
+    async def mock_yield(context):
+        yield mock_client
+    mock_wikidata.yield_for_execution = mock_yield
 
     # Configure for batching test
     mock_settings.WIKIDATA_ACTION_BATCH_SIZE = 2
@@ -67,7 +75,7 @@ async def test_extract_genres(
     mock_fetch_sparql.return_value = [] # No parents for now
 
     # Execution
-    result_df = await extract_genres(context, mock_client, mock_artists_df, mock_albums_df, mock_tracks_df)
+    result_df = await extract_genres(context, mock_wikidata, mock_artists_df, mock_albums_df, mock_tracks_df)
 
     # Assertions
     assert isinstance(result_df, pl.DataFrame)

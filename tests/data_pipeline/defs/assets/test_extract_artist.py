@@ -86,7 +86,7 @@ async def test_extract_artist(
     }
 
     # Mock Last.fm Data (Generic Side Effect)
-    async def lastfm_side_effect(context, params, cache_key, client=None):
+    async def lastfm_side_effect(context, params, cache_key, api_key=None, client=None):
         if "mbid" in params and params["mbid"] == "mbid-1":
             return {"artist": {"mbid": "mbid-1", "tags": {"tag": [{"name": "Tag 1"}]}, "similar": {"artist": [{"name": "Sim 1"}]}}}
         if "artist" in params and params["artist"] == "Artist 1":
@@ -95,13 +95,21 @@ async def test_extract_artist(
 
     mock_lastfm.side_effect = lastfm_side_effect
 
+    from contextlib import asynccontextmanager
+
     # Mock Context and Resource
     api_config = ApiConfiguration(lastfm_api_key="dummy_key", nomic_api_key="dummy")
     context = build_asset_context()
     mock_client = MagicMock(spec=httpx.AsyncClient)
 
+    mock_wikidata = MagicMock()
+    @asynccontextmanager
+    async def mock_yield(context):
+        yield mock_client
+    mock_wikidata.yield_for_execution = mock_yield
+
     # Execution
-    result_df = await extract_artists(context, mock_client, api_config, mock_index_df)
+    result_df = await extract_artists(context, mock_wikidata, api_config, mock_index_df)
 
     # Assertions
     assert isinstance(result_df, pl.DataFrame)

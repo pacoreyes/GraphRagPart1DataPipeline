@@ -189,7 +189,7 @@ async def _enrich_artist_batch(
         return Artist(
             id=qid,
             name=name,
-            aliases=aliases,
+            aliases=aliases if aliases else None,
             country=country_label if country_label else None,
             genres=meta.get("genre_qids") if meta.get("genre_qids") else None,
             tags=tags if tags else None,

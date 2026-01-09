@@ -53,12 +53,20 @@ async def test_extract_wikipedia_articles_flow():
         mock_splitter_instance = mock_splitter_cls.from_huggingface_tokenizer.return_value
         mock_splitter_instance.split_text.return_value = ["Chunk 1", "Chunk 2"]
 
+        from contextlib import asynccontextmanager
+
         # Create Context
         context = build_asset_context()
         mock_client = MagicMock(spec=httpx.AsyncClient)
 
+        mock_wikidata = MagicMock()
+        @asynccontextmanager
+        async def mock_yield(context):
+            yield mock_client
+        mock_wikidata.yield_for_execution = mock_yield
+
         # Run Asset
-        result_df = await extract_wikipedia_articles(context, mock_client, artists_df, genres_df, index_df)
+        result_df = await extract_wikipedia_articles(context, mock_wikidata, artists_df, genres_df, index_df)
 
         # Verifications
         assert isinstance(result_df, pl.DataFrame)
