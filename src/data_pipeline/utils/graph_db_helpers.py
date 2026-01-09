@@ -13,8 +13,6 @@ from dagster import Config, AssetExecutionContext, EnvVar
 from neo4j import GraphDatabase, Driver
 from pydantic import Field
 
-from data_pipeline.settings import settings
-
 
 class Neo4jConfig(Config):
     """Configuration for Neo4j connection."""
@@ -37,14 +35,25 @@ def get_neo4j_driver(config: Optional[Neo4jConfig] = None) -> Driver:
     Initializes and returns a Neo4j driver based on the configuration.
 
     Args:
-        config: The Neo4j configuration object. If None, uses defaults from settings.
+        config: The Neo4j configuration object. If None, uses defaults from EnvVars.
 
     Returns:
         A Neo4j Driver instance.
     """
-    uri = config.uri if config else settings.NEO4J_URI
-    username = config.username if config else settings.NEO4J_USERNAME
-    password = config.password if config else settings.NEO4J_PASSWORD
+    if config:
+        uri = config.uri
+        username = config.username
+        password = config.password
+    else:
+        # Fallback to manual EnvVar resolution if no config provided (for scripts)
+        # Dagster EnvVar objects resolve to their value when cast to string or accessed,
+        # but here we should handle them or let the driver handle the string values.
+        # Actually, Neo4jConfig already has EnvVar defaults. 
+        # If we instantiate it without args, it resolves them.
+        resolved_config = Neo4jConfig()
+        uri = resolved_config.uri
+        username = resolved_config.username
+        password = resolved_config.password
     
     return GraphDatabase.driver(uri, auth=(username, password))
 
