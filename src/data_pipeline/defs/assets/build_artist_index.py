@@ -20,7 +20,7 @@ from data_pipeline.utils.wikidata_helpers import (
     run_extraction_pipeline,
     get_sparql_binding_value
 )
-from data_pipeline.utils.transformation_helpers import deduplicate_by_priority, normalize_and_clean_text
+from data_pipeline.utils.text_transformation_helpers import deduplicate_by_priority, normalize_and_clean_text
 from data_pipeline.defs.partitions import decade_partitions, DECADES_TO_EXTRACT
 from data_pipeline.defs.resources import WikidataResource
 

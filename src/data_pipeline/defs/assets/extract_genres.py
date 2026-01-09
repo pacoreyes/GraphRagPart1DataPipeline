@@ -17,7 +17,7 @@ from dagster import asset, AssetExecutionContext
 from data_pipeline.models import Genre
 from data_pipeline.settings import settings
 from data_pipeline.utils.network_helpers import yield_batches_concurrently
-from data_pipeline.utils.transformation_helpers import extract_unique_ids_from_column, normalize_and_clean_text
+from data_pipeline.utils.text_transformation_helpers import extract_unique_ids_from_column, normalize_and_clean_text
 from data_pipeline.utils.wikidata_helpers import (
     async_fetch_wikidata_entities_batch,
     extract_wikidata_aliases,

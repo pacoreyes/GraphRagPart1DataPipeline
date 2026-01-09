@@ -7,10 +7,6 @@
 # email pacoreyes@protonmail.com
 # ----------------------------------------------------------- 
 
-"""
-Wikipedia API Helpers (Infrastructure Layer)
-Generic functions for fetching and cleaning Wikipedia content.
-"""
 import asyncio
 import hashlib
 import re
@@ -103,28 +99,3 @@ async def async_fetch_wikipedia_article(
         return None
 
     return None
-
-
-def clean_wikipedia_text(text: str, exclusion_patterns: Optional[List[str]] = None) -> str:
-    """
-    Generic Wikipedia text cleaner.
-    Truncates text at the first occurrence of any provided exclusion pattern.
-    """
-    if not text:
-        return ""
-
-    if exclusion_patterns:
-        # Create a combined regex pattern
-        # e.g. ^\s*==\s*(References|See also)\s*==
-        pattern_str = r"^\s*==\s*(" + "|".join(exclusion_patterns) + r")\s*=="
-        pattern = re.compile(pattern_str, re.MULTILINE | re.IGNORECASE)
-        
-        match = pattern.search(text)
-        if match:
-            text = text[:match.start()]
-
-    # Standard whitespace cleaning
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    text = text.strip()
-
-    return text

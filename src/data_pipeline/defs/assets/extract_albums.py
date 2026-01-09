@@ -22,7 +22,7 @@ from data_pipeline.utils.wikidata_helpers import (
     fetch_sparql_query_async,
     get_sparql_binding_value,
 )
-from data_pipeline.utils.transformation_helpers import normalize_and_clean_text
+from data_pipeline.utils.text_transformation_helpers import normalize_and_clean_text
 from data_pipeline.defs.resources import WikidataResource
 
 

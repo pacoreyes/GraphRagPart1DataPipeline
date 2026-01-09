@@ -30,7 +30,7 @@ from data_pipeline.utils.wikidata_helpers import (
     extract_wikidata_wikipedia_url,
 )
 from data_pipeline.utils.lastfm_helpers import async_fetch_lastfm_data_with_cache
-from data_pipeline.utils.transformation_helpers import normalize_and_clean_text
+from data_pipeline.utils.text_transformation_helpers import normalize_and_clean_text
 from data_pipeline.defs.resources import WikidataResource, LastFmResource
 
 # --- Music Domain Constants ---
