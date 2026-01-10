@@ -1,6 +1,6 @@
 # GraphRAG - Part 1: Data Pipeline
 
-*Last update: January 7, 2026*
+*Last update: January 10, 2026*
 
 This repo is part of a larger project **GraphRAG** app, in which I show how the GraphRAG pattern works. 
 
