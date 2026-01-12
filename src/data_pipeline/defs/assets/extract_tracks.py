@@ -7,156 +7,91 @@
 # email pacoreyes@protonmail.com
 # -----------------------------------------------------------
 
-import uuid
-from typing import Any
-
 import httpx
 import msgspec
 import polars as pl
 from dagster import asset, AssetExecutionContext
 
-from data_pipeline.models import Track
+from data_pipeline.models import Track, TRACK_SCHEMA
 from data_pipeline.settings import settings
-from data_pipeline.utils.io_helpers import async_append_jsonl
-from data_pipeline.utils.wikidata_helpers import (
-    fetch_sparql_query_async,
-    get_sparql_binding_value,
-)
+from data_pipeline.utils.io_helpers import async_append_jsonl, async_clear_file
+from data_pipeline.utils.musicbrainz_helpers import fetch_tracks_for_release_group_async
 from data_pipeline.utils.text_transformation_helpers import normalize_and_clean_text
-from data_pipeline.defs.resources import WikidataResource
-
-
-def get_tracks_by_albums_batch_query(album_qids: list[str]) -> str:
-    """
-    Builds a SPARQL query to fetch tracks for multiple albums in one request.
-    Uses bidirectional logic: Album->Track (P658) OR Track->Album (P361).
-    Implements explicit label fallback (English -> Any).
-
-    Args:
-        album_qids: List of Album Wikidata QIDs.
-
-    Returns:
-        A SPARQL query string.
-    """
-    values = " ".join([f"wd:{qid}" for qid in album_qids])
-    return f"""
-    SELECT DISTINCT ?album ?track ?trackLabel ?genre WHERE {{
-      VALUES ?album {{ {values} }}
-      {{ ?album wdt:P658 ?track. }}  # Forward: Album has tracklist containing track
-      UNION
-      {{ ?track wdt:P361 ?album. }}  # Reverse: Track is part of album
-      
-      OPTIONAL {{ ?track wdt:P136 ?genre. }}
-
-      # Label Fallback: English -> Any
-      OPTIONAL {{ ?track rdfs:label ?enLabel . FILTER(LANG(?enLabel) = "en") }}
-      OPTIONAL {{ ?track rdfs:label ?anyLabel . }}
-      BIND(COALESCE(?enLabel, ?anyLabel) AS ?trackLabel)
-    }}
-    """
 
 
 @asset(
     name="tracks",
-    description="Extract Tracks dataset from the Albums list using Wikidata SPARQL.",
+    description="Extract Tracks dataset from the Releases list using MusicBrainz API.",
 )
 async def extract_tracks(
     context: AssetExecutionContext, 
-    wikidata: WikidataResource, 
-    albums: pl.LazyFrame
+    releases: pl.LazyFrame
 ) -> pl.LazyFrame:
     """
-    Retrieves all tracks for each album in the albums dataset from Wikidata.
+    Retrieves all tracks for each release (Release Group) in the releases dataset from MusicBrainz.
     Returns a Polars LazyFrame backed by a temporary JSONL file.
     """
-    context.log.info("Starting track extraction from albums dataset.")
+    context.log.info("Starting tracks extraction from MusicBrainz.")
 
     # Temp file
-    temp_file = settings.DATASETS_DIRPATH / ".temp" / f"tracks_{uuid.uuid4()}.jsonl"
+    assert settings.DATASETS_DIRPATH is not None
+    temp_file = settings.DATASETS_DIRPATH / ".temp" / "tracks.jsonl"
     temp_file.parent.mkdir(parents=True, exist_ok=True)
+    await async_clear_file(temp_file)
 
-    # 1. Get Total Rows (Lazy Count)
-    total_rows = albums.select(pl.len()).collect().item()
-    if total_rows == 0:
-        return pl.LazyFrame()
+    # 1. Collect Release MBIDs
+    # The 'id' in releases is the MBID of the Release Group.
+    releases_df = releases.select(["id", "title"]).collect()
+    
+    rows = releases_df.to_dicts()
+    total_releases = len(rows)
 
-    context.log.info(f"Fetching tracks for {total_rows} albums.")
+    if total_releases == 0:
+        context.log.warning("No releases found. Returning empty tracks.")
+        return pl.DataFrame(schema=TRACK_SCHEMA).lazy()
 
-    # 2. Define worker function for batch processing
-    async def process_batch(
-        qid_chunk: list[str], client: httpx.AsyncClient
-    ) -> list[dict[str, Any]]:
-        query = get_tracks_by_albums_batch_query(qid_chunk)
-        results = await fetch_sparql_query_async(
-            context, 
-            query, 
-            sparql_endpoint=settings.WIKIDATA_SPARQL_ENDPOINT,
-            headers=settings.DEFAULT_REQUEST_HEADERS,
-            timeout=settings.WIKIDATA_SPARQL_REQUEST_TIMEOUT,
-            client=client
-        )
+    context.log.info(f"Found {total_releases} releases to process tracks for.")
 
-        # Map to aggregate aliases and deduplicate within batch
-        # Key: (track_id, album_id) -> {title, genres}
-        track_map: dict[tuple[str, str], dict[str, Any]] = {}
+    # 2. Worker Function
+    # We process sequentially to respect MB rate limits (1 req/sec).
+    # Since each release group needs 2 calls (if not cached), we must be careful.
+    
+    buffer = []
+    processed_count = 0
+    
+    async with httpx.AsyncClient(timeout=settings.MUSICBRAINZ_REQUEST_TIMEOUT) as client:
+        for i, row in enumerate(rows):
+            release_group_mbid = row["id"]
+            release_title = row["title"]
+            
+            if i % 10 == 0:
+                context.log.info(f"Processing tracks for release {i}/{total_releases}: {release_title}")
 
-        for row in results:
-            track_uri = get_sparql_binding_value(row, "track")
-            album_uri = get_sparql_binding_value(row, "album")
-            title = get_sparql_binding_value(row, "trackLabel")
-            genre_uri = get_sparql_binding_value(row, "genre")
-
-            if not all([track_uri, album_uri, title]):
-                continue
-
-            title = normalize_and_clean_text(title)
-            track_id = track_uri.split("/")[-1]
-            album_id = album_uri.split("/")[-1]
-
-            key = (track_id, album_id)
-            if key not in track_map:
-                track_map[key] = {
-                    "title": title,
-                    "genres": set()
-                }
-
-            if genre_uri:
-                genre_id = genre_uri.split("/")[-1]
-                track_map[key]["genres"].add(genre_id)
-
-        return [
-            msgspec.to_builtins(
-                Track(
-                    id=tid,
-                    title=data["title"],
-                    album_id=aid,
-                    genres=list(data["genres"]) if data["genres"] else None,
+            # Fetch Tracks (Async with retries and 2-step MB logic)
+            mb_tracks = await fetch_tracks_for_release_group_async(context, release_group_mbid, client)
+            
+            for t in mb_tracks:
+                track = Track(
+                    id=t["id"],
+                    title=normalize_and_clean_text(t["title"]),
+                    album_id=release_group_mbid,
                 )
-            )
-            for (tid, aid), data in track_map.items()
-        ]
+                buffer.append(msgspec.to_builtins(track))
+                
+            # Flush buffer periodically
+            if len(buffer) >= 200:
+                await async_append_jsonl(temp_file, buffer)
+                processed_count += len(buffer)
+                buffer = []
+                
+    # Flush remaining
+    if buffer:
+        await async_append_jsonl(temp_file, buffer)
+        processed_count += len(buffer)
 
-    # 3. Stream processing
-    batch_size = settings.WIKIDATA_ACTION_BATCH_SIZE
+    context.log.info(f"Tracks extraction complete. Saved {processed_count} tracks to {temp_file}")
     
-    async with wikidata.get_client(context) as client:
-        for offset in range(0, total_rows, batch_size):
-            context.log.info(f"Processing tracks batch offset {offset}/{total_rows}")
-            
-            # Fetch batch of QIDs
-            batch_df = albums.slice(offset, batch_size).select("id").collect()
-            batch_qids = batch_df["id"].to_list()
-            
-            if not batch_qids:
-                continue
+    if processed_count == 0:
+        return pl.DataFrame(schema=TRACK_SCHEMA).lazy()
 
-            # Process
-            tracks_batch = await process_batch(batch_qids, client)
-            
-            # Write
-            await async_append_jsonl(temp_file, tracks_batch)
-
-    context.log.info(f"Tracks extracted to {temp_file}")
-    
-    # Return LazyFrame with lazy deduplication
-    return pl.scan_ndjson(str(temp_file)).unique(subset=["id", "album_id"])
+    return pl.scan_ndjson(str(temp_file))

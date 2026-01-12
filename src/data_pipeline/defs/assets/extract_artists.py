@@ -7,7 +7,7 @@
 # email pacoreyes@protonmail.com
 # -----------------------------------------------------------
 
-import uuid
+import re
 from typing import Any, Optional
 
 import httpx
@@ -19,7 +19,7 @@ from data_pipeline.settings import settings
 from data_pipeline.utils.network_helpers import (
     run_tasks_concurrently,
 )
-from data_pipeline.utils.io_helpers import async_append_jsonl
+from data_pipeline.utils.io_helpers import async_append_jsonl, async_clear_file
 from data_pipeline.utils.wikidata_helpers import (
     async_fetch_wikidata_entities_batch,
     async_resolve_qids_to_labels,
@@ -36,6 +36,49 @@ from data_pipeline.defs.resources import WikidataResource, LastFmResource
 WIKIDATA_PROP_COUNTRY = ["P495", "P27"]
 WIKIDATA_PROP_GENRE = ["P136", "P101"]
 WIKIDATA_PROP_MBID = "P434"
+
+# Latin script unicode ranges:
+# Basic Latin: \u0000-\u007F (Includes ASCII punctuation/digits)
+# Latin-1 Supplement: \u0080-\u00FF
+# Latin Extended-A: \u0100-\u017F
+# Latin Extended-B: \u0180-\u024F
+# Latin Extended Additional: \u1E00-\u1EFF
+LATIN_REGEX = re.compile(r"^[\u0000-\u007F\u0080-\u00FF\u0100-\u017F\u0180-\u024F\u1E00-\u1EFF]*$")
+
+
+def _is_latin_name(name: str) -> bool:
+    """
+    Checks if the name consists only of Latin characters, numbers, and common symbols.
+    """
+    if not name:
+        return False
+    return bool(LATIN_REGEX.match(name))
+
+
+def _validate_artist_data(wikidata_info: dict[str, Any], country_label: Optional[str]) -> Optional[str]:
+    """
+    Centralized validation logic for an artist.
+    Returns the MBID if valid (Latin Check assumed passed upstream), else None.
+    
+    Criteria:
+    1. Must have English Wikipedia Article.
+    2. Must have MusicBrainz ID (MBID).
+    3. Must have a resolved Country Label.
+    """
+    # 1. Wikipedia Check
+    if not extract_wikidata_wikipedia_url(wikidata_info):
+        return None
+
+    # 2. MBID Check
+    mbid = extract_wikidata_claim_value(wikidata_info, WIKIDATA_PROP_MBID)
+    if not mbid:
+        return None
+
+    # 3. Country Check
+    if not country_label:
+        return None
+
+    return mbid
 
 
 async def _enrich_artist_batch(
@@ -58,8 +101,8 @@ async def _enrich_artist_batch(
 
     # 1. Fetch Wikidata entities
     wikidata_entities = await async_fetch_wikidata_entities_batch(
-        context, 
-        clean_qids, 
+        context,
+        clean_qids,
         api_url=settings.WIKIDATA_ACTION_API_URL,
         cache_dir=settings.WIKIDATA_CACHE_DIRPATH,
         timeout=settings.WIKIDATA_ACTION_REQUEST_TIMEOUT,
@@ -69,16 +112,14 @@ async def _enrich_artist_batch(
     )
 
     # 2. Collect metadata and resolve countries
+    # Note: We optimistically collect metadata for all items here.
+    # Validation happens in the worker to keep logic centralized.
     qids_to_resolve = set()
     artist_metadata_map = {}
 
     for qid in clean_qids:
         info = wikidata_entities.get(qid, {})
         
-        wiki_url = extract_wikidata_wikipedia_url(info)
-        if not wiki_url:
-            continue
-
         # Country logic
         country_qid = None
         for prop in WIKIDATA_PROP_COUNTRY:
@@ -100,8 +141,8 @@ async def _enrich_artist_batch(
 
     # 3. Resolve Labels for Countries
     labels_map = await async_resolve_qids_to_labels(
-        context, 
-        list(qids_to_resolve), 
+        context,
+        list(qids_to_resolve),
         api_url=settings.WIKIDATA_ACTION_API_URL,
         cache_dir=settings.WIKIDATA_CACHE_DIRPATH,
         timeout=settings.WIKIDATA_ACTION_REQUEST_TIMEOUT,
@@ -124,91 +165,49 @@ async def _enrich_artist_batch(
             return None
 
         wikidata_info = wikidata_entities.get(qid, {})
-        
-        # Country
+
+        # Resolve Country Label
         country_label = labels_map.get(meta.get("country_qid"))
         if country_label:
             country_label = normalize_and_clean_text(country_label)
 
+        # Centralized Validation
+        mbid = _validate_artist_data(wikidata_info, country_label)
+        if not mbid:
+            return None
+
         # Aliases
         aliases = [normalize_and_clean_text(a) for a in extract_wikidata_aliases(wikidata_info)]
 
-        # MBID
-        mbid = extract_wikidata_claim_value(wikidata_info, WIKIDATA_PROP_MBID)
-
         # Last.fm Strategy (Business Logic)
-        lastfm_data = None
-        
-        # Priority 1: MBID
-        if mbid:
-            lastfm_data = await async_fetch_lastfm_data_with_cache(
-                context, {
-                    "method": "artist.getInfo",
-                    "mbid": mbid,
-                    "autocorrect": 1
-                },
-                mbid,
-                api_key=lastfm.api_key,
-                api_url=settings.LASTFM_API_URL,
-                cache_dir=settings.LAST_FM_CACHE_DIRPATH,
-                timeout=settings.LASTFM_REQUEST_TIMEOUT,
-                rate_limit_delay=settings.LASTFM_RATE_LIMIT_DELAY,
-                client=client
-            )
-        
-        # Priority 2: Name
-        if not lastfm_data or "error" in lastfm_data:
-            lastfm_data = await async_fetch_lastfm_data_with_cache(
-                context, {
-                    "method": "artist.getInfo",
-                    "artist": name,
-                    "autocorrect": 1
-                },
-                name,
-                api_key=lastfm.api_key,
-                api_url=settings.LASTFM_API_URL,
-                cache_dir=settings.LAST_FM_CACHE_DIRPATH,
-                timeout=settings.LASTFM_REQUEST_TIMEOUT,
-                rate_limit_delay=settings.LASTFM_RATE_LIMIT_DELAY,
-                client=client
-            )
-            
-        # Priority 3: Aliases
-        if (not lastfm_data or "error" in lastfm_data) and aliases:
-            for alias in aliases:
-                lastfm_data = await async_fetch_lastfm_data_with_cache(
-                    context, {
-                        "method": "artist.getInfo",
-                        "artist": alias,
-                        "autocorrect": 1
-                    },
-                    alias,
-                    api_key=lastfm.api_key,
-                    api_url=settings.LASTFM_API_URL,
-                    cache_dir=settings.LAST_FM_CACHE_DIRPATH,
-                    timeout=settings.LASTFM_REQUEST_TIMEOUT,
-                    rate_limit_delay=settings.LASTFM_RATE_LIMIT_DELAY,
-                    client=client
-                )
-                if lastfm_data and "error" not in lastfm_data:
-                    break
+        lastfm_data = await async_fetch_lastfm_data_with_cache(
+            context, {
+                "method": "artist.getInfo",
+                "mbid": mbid,
+                "autocorrect": 1
+            },
+            mbid,
+            api_key=lastfm.api_key,
+            api_url=settings.LASTFM_API_URL,
+            cache_dir=settings.LAST_FM_CACHE_DIRPATH,
+            timeout=settings.LASTFM_REQUEST_TIMEOUT,
+            rate_limit_delay=settings.LASTFM_RATE_LIMIT_DELAY,
+            client=client
+        )
 
         tags = []
         similar_artists = []
-        lastfm_mbid = None
 
         if lastfm_data and "artist" in lastfm_data:
             # Domain-specific parsing of Last.fm response
             artist_data = lastfm_data.get("artist") or {}
 
-            lastfm_mbid = artist_data.get("mbid")
-            
             # Tags
             raw_tags = (artist_data.get("tags") or {}).get("tag") or []
             if isinstance(raw_tags, dict):
                 raw_tags = [raw_tags]
             tags = [t["name"] for t in raw_tags if isinstance(t, dict) and "name" in t]
-            
+
             # Similar
             raw_sim = (artist_data.get("similar") or {}).get("artist") or []
             if isinstance(raw_sim, dict):
@@ -218,7 +217,7 @@ async def _enrich_artist_batch(
         return Artist(
             id=qid,
             name=name,
-            mbid=lastfm_mbid,
+            mbid=mbid,
             aliases=aliases if aliases else None,
             country=country_label if country_label else None,
             genres=meta.get("genre_qids") if meta.get("genre_qids") else None,
@@ -245,8 +244,8 @@ async def _enrich_artist_batch(
     description="Enrich artists with Wikidata and Last.fm data.",
 )
 async def extract_artists(
-    context: AssetExecutionContext, 
-    wikidata: WikidataResource, 
+    context: AssetExecutionContext,
+    wikidata: WikidataResource,
     lastfm: LastFmResource,
     artist_index: pl.LazyFrame
 ) -> pl.LazyFrame:
@@ -257,8 +256,9 @@ async def extract_artists(
     context.log.info("Starting artist enrichment for full index.")
 
     # Temp file for streaming results
-    temp_file = settings.DATASETS_DIRPATH / ".temp" / f"artists_{uuid.uuid4()}.jsonl"
+    temp_file = settings.DATASETS_DIRPATH / ".temp" / "artists.jsonl"
     temp_file.parent.mkdir(parents=True, exist_ok=True)
+    await async_clear_file(temp_file)
 
     # 1. Get Total Count for Loop
     # We collect only the count, which is O(1) memory
@@ -269,26 +269,47 @@ async def extract_artists(
         return pl.LazyFrame()
 
     batch_size = settings.WIKIDATA_ACTION_BATCH_SIZE
-    
+
     async with wikidata.get_client(context) as client:
         # 2. Iterate Batches using Slicing
         for offset in range(0, total_rows, batch_size):
             context.log.info(f"Processing batch offset {offset}/{total_rows}")
-            
+
             # Efficiently fetch only the current batch from source
             batch_df = artist_index.slice(offset, batch_size).collect()
             batch_items = batch_df.to_dicts()
-            
+
+            # Filter non-Latin names
+            filtered_items = [
+                item for item in batch_items
+                if _is_latin_name(item.get("name", ""))
+            ]
+            dropped_count = len(batch_items) - len(filtered_items)
+            if dropped_count > 0:
+                context.log.info(
+                    f"Dropped {dropped_count} non-Latin artists from batch {offset}"
+                )
+
+            if not filtered_items:
+                continue
+
             # Enrich Batch
             enriched_batch = await _enrich_artist_batch(
-                batch_items, context, lastfm, client
+                filtered_items, context, lastfm, client
             )
-            
+
+            # Filter metadata drops
+            metadata_dropped_count = len(filtered_items) - len(enriched_batch)
+            if metadata_dropped_count > 0:
+                context.log.info(
+                    f"Dropped {metadata_dropped_count} artists with missing metadata from batch {offset}"
+                )
+
             # Write Batch to Disk (Stream)
             await async_append_jsonl(temp_file, enriched_batch)
 
     context.log.info(f"Enriched artists saved to {temp_file}")
-    
+
     # Return LazyFrame pointing to the streamed file
     # Ensure we use scan_ndjson as we wrote JSONL
     return pl.scan_ndjson(str(temp_file))

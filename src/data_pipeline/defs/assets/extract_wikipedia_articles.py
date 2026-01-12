@@ -8,7 +8,7 @@
 # -----------------------------------------------------------
 
 import asyncio
-import uuid
+import re
 from typing import Dict, Any, List
 
 import httpx
@@ -20,9 +20,9 @@ from transformers import AutoTokenizer
 
 from data_pipeline.models import Article, ArticleMetadata
 from data_pipeline.settings import settings
-from data_pipeline.utils.io_helpers import async_append_jsonl
+from data_pipeline.utils.io_helpers import async_append_jsonl, async_clear_file
 from data_pipeline.utils.network_helpers import yield_batches_concurrently
-from data_pipeline.utils.text_transformation_helpers import normalize_and_clean_text, clean_wikipedia_text
+from data_pipeline.utils.text_transformation_helpers import normalize_and_clean_text
 from data_pipeline.utils.wikidata_helpers import (
     async_fetch_wikidata_entities_batch,
     extract_wikidata_wikipedia_url
@@ -91,8 +91,9 @@ async def extract_wikipedia_articles(
     context.log.info(f"Found {total_rows} artists to process for Wikipedia articles.")
 
     # Setup Temp File for Streaming Output
-    temp_file = settings.DATASETS_DIRPATH / ".temp" / f"wikipedia_articles_{uuid.uuid4()}.jsonl"
+    temp_file = settings.DATASETS_DIRPATH / ".temp" / "wikipedia_articles.jsonl"
     temp_file.parent.mkdir(parents=True, exist_ok=True)
+    await async_clear_file(temp_file)
 
     # 2. Setup Splitter
     tokenizer = AutoTokenizer.from_pretrained(
@@ -102,7 +103,7 @@ async def extract_wikipedia_articles(
         tokenizer,
         chunk_size=2048,
         chunk_overlap=512,
-        separators=["\n\n", "\n", " ", ""],
+        separators=["\n\n", "\n", ". ", "? ", "! ", " ", ""],
     )
 
     # 3. Worker Function
@@ -134,24 +135,59 @@ async def extract_wikipedia_articles(
         if not raw_text:
             return []
 
-        # Domain-specific text cleaning
-        def process_text(text: str) -> List[str]:
-            cleaned = normalize_and_clean_text(clean_wikipedia_text(text, WIKIPEDIA_EXCLUSION_HEADERS))
-            return text_splitter.split_text(cleaned)
+        # 1. Section Parsing
+        # Split by headers (e.g., "== Career ==")
+        # Capturing group keeps delimiters in the list
+        segments = re.split(r'(^={2,}[^=]+={2,}\s*$)', raw_text, flags=re.MULTILINE)
 
-        chunks = await asyncio.to_thread(process_text, raw_text)
-        
-        total_chunks = len(chunks)
+        current_section = "Introduction"
+        all_chunks_with_context = []
+
+        for segment in segments:
+            segment = segment.strip()
+            if not segment:
+                continue
+
+            # Check if header
+            if segment.startswith("==") and segment.endswith("=="):
+                header_clean = segment.strip("=").strip()
+                
+                # Check for exclusion headers (References, etc.)
+                # If found, stop processing the rest of the document (standard Wikipedia cleaner behavior)
+                if any(ex.lower() == header_clean.lower() for ex in WIKIPEDIA_EXCLUSION_HEADERS):
+                    break
+                
+                current_section = header_clean
+            else:
+                # Content Block
+                # We use normalize_and_clean_text directly on the section content
+                cleaned_content = normalize_and_clean_text(segment)
+                
+                # Skip if content is empty or too short to be semantically useful (threshold: 30 chars)
+                if not cleaned_content or len(cleaned_content) < 30:
+                    continue
+
+                section_chunks = text_splitter.split_text(cleaned_content)
+                for chunk in section_chunks:
+                    all_chunks_with_context.append((current_section, chunk))
+
+        total_chunks = len(all_chunks_with_context)
         genre_ids = artist_row.get("genres") or []
         genre_names = [genres_map[gid] for gid in genre_ids if gid in genres_map]
         year = inception_year_map.get(qid)
         
         results = []
-        for i, chunk_text in enumerate(chunks):
-            enriched_text = f"search_document: {artist_name} | {chunk_text}"
+        for i, (section, chunk_text) in enumerate(all_chunks_with_context):
+            # Prepend Section Context
+            enriched_text = f"search_document: {artist_name} (Section: {section}) | {chunk_text}"
+            
             meta = ArticleMetadata(
                 title=title.replace("_", " "),
                 artist_name=artist_name,
+                country=artist_row.get("country") or "Unknown",
+                aliases=artist_row.get("aliases"),
+                tags=artist_row.get("tags"),
+                similar_artists=artist_row.get("similar_artists"),
                 genres=genre_names if genre_names else None,
                 inception_year=year,
                 wikipedia_url=wiki_url,

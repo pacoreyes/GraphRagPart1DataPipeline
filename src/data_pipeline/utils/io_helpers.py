@@ -79,6 +79,14 @@ async def async_write_text_file(path: Path, content: str) -> None:
     await asyncio.to_thread(write_text)
 
 
+async def async_clear_file(path: Path) -> None:
+    """
+    Deletes the file if it exists asynchronously.
+    """
+    if await asyncio.to_thread(path.exists):
+        await asyncio.to_thread(path.unlink)
+
+
 def decode_json(data: bytes) -> Any:
     """
     Decodes JSON bytes using msgspec.

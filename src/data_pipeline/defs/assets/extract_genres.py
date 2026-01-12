@@ -7,7 +7,6 @@
 # email pacoreyes@protonmail.com
 # -----------------------------------------------------------
 
-import uuid
 from collections import defaultdict
 from typing import Any
 
@@ -18,11 +17,8 @@ from dagster import asset, AssetExecutionContext
 
 from data_pipeline.models import Genre
 from data_pipeline.settings import settings
-from data_pipeline.utils.io_helpers import async_append_jsonl
-from data_pipeline.utils.text_transformation_helpers import (
-    extract_unique_ids_from_lazy_column,
-    normalize_and_clean_text
-)
+from data_pipeline.utils.io_helpers import async_append_jsonl, async_clear_file
+from data_pipeline.utils.text_transformation_helpers import normalize_and_clean_text
 from data_pipeline.utils.wikidata_helpers import (
     async_fetch_wikidata_entities_batch,
     extract_wikidata_aliases,
@@ -55,38 +51,38 @@ def get_genre_parents_batch_query(genre_qids: list[str]) -> str:
 
 @asset(
     name="genres",
-    description="Extract Genres dataset from artists, albums and tracks",
+    description="Extract Genres dataset from the Artists dataset.",
 )
 async def extract_genres(
     context: AssetExecutionContext, 
     wikidata: WikidataResource,
-    artists: pl.LazyFrame,
-    albums: pl.LazyFrame,
-    tracks: pl.LazyFrame
+    artists: pl.LazyFrame
 ) -> pl.LazyFrame:
     """
-    Extracts all unique music genre IDs from artists, albums, and tracks,
+    Extracts all unique music genre IDs from the artists dataset,
     fetches their English labels, aliases, and parents from Wikidata.
     Returns a Polars LazyFrame backed by a temporary JSONL file.
     """
-    context.log.info("Starting genre extraction from artists, albums, and tracks.")
+    context.log.info("Starting genre extraction from artists.")
 
     # Temp file
-    temp_file = settings.DATASETS_DIRPATH / ".temp" / f"genres_{uuid.uuid4()}.jsonl"
+    temp_file = settings.DATASETS_DIRPATH / ".temp" / "genres.jsonl"
     temp_file.parent.mkdir(parents=True, exist_ok=True)
+    await async_clear_file(temp_file)
 
     # 1. Lazy ID Extraction
-    lfs = []
-    for lf in [artists, albums, tracks]:
-        lfs.append(extract_unique_ids_from_lazy_column(lf, "genres"))
+    # Extract unique genre QIDs from the 'genres' column in the artists dataset.
+    unique_genre_ids = (
+        artists.select("genres")
+        .explode("genres")
+        .unique()
+        .drop_nulls()
+        .collect()
+        .to_series()
+        .to_list()
+    )
     
-    combined_lf = pl.concat(lfs).unique().drop_nulls()
-    
-    # Materialize ONLY the IDs (typically small < 10k)
-    # We must collect here to drive the API queries
-    unique_genre_ids = combined_lf.collect().to_series().to_list()
-    
-    context.log.info(f"Found {len(unique_genre_ids)} unique genre IDs.")
+    context.log.info(f"Found {len(unique_genre_ids)} unique genre IDs in artists.")
 
     if not unique_genre_ids:
         context.log.warning("No genre IDs found. Returning empty LazyFrame.")

@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     # LastFM API URL
     LASTFM_API_URL: str = "https://ws.audioscrobbler.com/2.0/"
 
+    # MusicBrainz API URL
+    MUSICBRAINZ_API_URL: str = "https://musicbrainz.org/ws/2"
+
     # Bot's public identity (Polite for APIs)
     APP_NAME: str = "Nodes AI"
     APP_VERSION: str = "0.1.0"

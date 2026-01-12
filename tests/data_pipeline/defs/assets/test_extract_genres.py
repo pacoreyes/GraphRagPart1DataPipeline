@@ -38,15 +38,9 @@ async def test_extract_genres(
     mock_settings.WIKIDATA_CONCURRENT_REQUESTS = 2
     mock_settings.DATASETS_DIRPATH = Path("/tmp")
 
-    # Mock Input DataFrames
+    # Mock Input DataFrame
     mock_artists_df = pl.DataFrame({
-        "genres": [["Q101", "Q102"]]
-    }).lazy()
-    mock_albums_df = pl.DataFrame({
-        "genres": [["Q102", "Q103"]]
-    }).lazy()
-    mock_tracks_df = pl.DataFrame({
-        "genres": [["Q104"]]
+        "genres": [["Q101", "Q102"], ["Q102", "Q103"], ["Q104"]]
     }).lazy()
 
     # Unique Genres Expected: Q101, Q102, Q103, Q104
@@ -84,7 +78,7 @@ async def test_extract_genres(
     mock_scan.return_value = pl.DataFrame({"name": ["Genre A"]}).lazy()
 
     # Execution
-    result_df = await extract_genres(context, mock_wikidata, mock_artists_df, mock_albums_df, mock_tracks_df)
+    result_df = await extract_genres(context, mock_wikidata, mock_artists_df)
 
     assert isinstance(result_df, pl.LazyFrame)
     assert mock_append.called

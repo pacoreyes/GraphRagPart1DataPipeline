@@ -45,10 +45,9 @@ async def test_extract_wikipedia_articles_flow():
          patch("data_pipeline.defs.assets.extract_wikipedia_articles.async_fetch_wikidata_entities_batch", side_effect=mock_fetch_entities), \
          patch("data_pipeline.defs.assets.extract_wikipedia_articles.AutoTokenizer"), \
          patch("data_pipeline.defs.assets.extract_wikipedia_articles.RecursiveCharacterTextSplitter") as mock_splitter_cls:
-        
         # Setup specific mock returns
-        mock_fetch.return_value = "This is text for Artist One."
-        
+        mock_fetch.return_value = "This is a sufficiently long text for Artist One to ensure it passes the minimal content filter of 50 characters."
+
         # Setup Text Splitter Mock
         mock_splitter_instance = mock_splitter_cls.from_huggingface_tokenizer.return_value
         mock_splitter_instance.split_text.return_value = ["Chunk 1", "Chunk 2"]

@@ -1,118 +1,59 @@
-# -----------------------------------------------------------
-# Unit Tests for tracks
-# Dagster Data pipeline for Structured and Unstructured Data
-#
-# (C) 2025-2026 Juan-Francisco Reyes, Cottbus, Germany
-# Released under MIT License
-# email pacoreyes@protonmail.com
-# -----------------------------------------------------------
-
 import pytest
-import httpx
-from pathlib import Path
-from unittest.mock import patch, MagicMock
 import polars as pl
+from unittest.mock import MagicMock, AsyncMock
 from dagster import build_asset_context
 
 from data_pipeline.defs.assets.extract_tracks import extract_tracks
 
-@pytest.mark.asyncio
-@patch("data_pipeline.defs.assets.extract_tracks.pl.scan_ndjson")
-@patch("data_pipeline.defs.assets.extract_tracks.async_append_jsonl")
-@patch("data_pipeline.defs.assets.extract_tracks.fetch_sparql_query_async")
-@patch("data_pipeline.defs.assets.extract_tracks.settings")
-async def test_extract_tracks(
-    mock_settings,
-    mock_fetch_sparql,
-    mock_append,
-    mock_scan
-):
-    """
-    Test the tracks asset.
-    """
-    # Setup mock settings
-    mock_settings.WIKIDATA_ACTION_BATCH_SIZE = 10
-    mock_settings.WIKIDATA_SPARQL_REQUEST_TIMEOUT = 10
-    mock_settings.WIKIDATA_CONCURRENT_REQUESTS = 2
-    mock_settings.DATASETS_DIRPATH = Path("/tmp")
+@pytest.fixture
+def mock_fetch_tracks(mocker):
+    return mocker.patch(
+        "data_pipeline.defs.assets.extract_tracks.fetch_tracks_for_release_group_async",
+        new_callable=AsyncMock
+    )
 
-    # Mock Input DataFrame (albums)
-    mock_albums_df = pl.DataFrame({
-        "id": ["Q100", "Q200"]
+@pytest.mark.asyncio
+async def test_extract_tracks_success(mock_fetch_tracks):
+    """
+    Test that extract_tracks correctly processes releases and extracts tracks from MusicBrainz.
+    """
+    # 1. Setup Input Data
+    releases_df = pl.DataFrame({
+        "id": ["rg-123"],
+        "title": ["Test Album"]
     }).lazy()
 
-    # Mock SPARQL Response
-    mock_fetch_sparql.return_value = [
-        # Track T1 (linked via Album->Track)
-        {
-            "album": {"value": "http://www.wikidata.org/entity/Q100"},
-            "track": {"value": "http://www.wikidata.org/entity/T1"},
-            "trackLabel": {"value": "Track One"},
-        },
-        # Track T2 (linked via Track->Album)
-        {
-            "album": {"value": "http://www.wikidata.org/entity/Q100"},
-            "track": {"value": "http://www.wikidata.org/entity/T2"},
-            "trackLabel": {"value": "Track Two"},
-        },
-        # Track T3 on Q200
-        {
-            "album": {"value": "http://www.wikidata.org/entity/Q200"},
-            "track": {"value": "http://www.wikidata.org/entity/T3"},
-            "trackLabel": {"value": "Track Three"},
-        },
-        # Track T1 on Q200 (Shared Track) - Should BE KEPT as a separate entry
-        {
-            "album": {"value": "http://www.wikidata.org/entity/Q200"},
-            "track": {"value": "http://www.wikidata.org/entity/T1"},
-            "trackLabel": {"value": "Track One"},
-        }
+    # 2. Setup Mock Return Value
+    mock_fetch_tracks.return_value = [
+        {"id": "rec-1", "title": "Song A", "length": 100},
+        {"id": "rec-2", "title": "Song B", "length": 200}
     ]
-    
-    # Mock Scan
-    mock_scan.return_value = pl.DataFrame({"title": ["Track One"]}).lazy()
 
-    from contextlib import asynccontextmanager
-
-    # Mock Context and Resource
+    # 3. Run Asset
     context = build_asset_context()
-    mock_client = MagicMock(spec=httpx.AsyncClient)
+    result_lf = await extract_tracks(context, releases_df)
+    result = result_lf.collect()
 
-    mock_wikidata = MagicMock()
-    @asynccontextmanager
-    async def mock_yield(context):
-        yield mock_client
-    mock_wikidata.get_client = mock_yield
+    # 4. Verify
+    assert result.height == 2
+    assert result.row(0, named=True)["id"] == "rec-1"
+    assert result.row(0, named=True)["album_id"] == "rg-123"
+    assert result.row(1, named=True)["title"] == "Song B"
 
-    # Execution
-    result_df = await extract_tracks(context, mock_wikidata, mock_albums_df)
-
-    # Assertions
-    assert isinstance(result_df, pl.LazyFrame)
-    assert mock_append.called
-    assert mock_scan.called
+    assert mock_fetch_tracks.call_count == 1
+    args, _ = mock_fetch_tracks.call_args
+    assert args[1] == "rg-123"
 
 @pytest.mark.asyncio
-async def test_extract_tracks_empty_albums():
+async def test_extract_tracks_empty_input(mock_fetch_tracks):
     """
-    Test tracks with empty albums DataFrame.
+    Test handling of empty input dataframe.
     """
-    from contextlib import asynccontextmanager
-    
-    # Mock Empty DataFrame
-    mock_albums_df = pl.DataFrame({"id": []}, schema={"id": pl.String}).lazy()
-    
+    releases_df = pl.DataFrame(schema={"id": pl.Utf8, "title": pl.Utf8}).lazy()
+
     context = build_asset_context()
-    mock_client = MagicMock(spec=httpx.AsyncClient)
-    
-    mock_wikidata = MagicMock()
-    @asynccontextmanager
-    async def mock_yield(context):
-        yield mock_client
-    mock_wikidata.get_client = mock_yield
-    
-    result_df = await extract_tracks(context, mock_wikidata, mock_albums_df)
-    
-    # Should return empty LazyFrame
-    assert isinstance(result_df, pl.LazyFrame)
-    assert result_df.collect().height == 0
+    result_lf = await extract_tracks(context, releases_df)
+    result = result_lf.collect()
+
+    assert result.height == 0
+    mock_fetch_tracks.assert_not_called()

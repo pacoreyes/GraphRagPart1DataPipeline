@@ -160,8 +160,8 @@ erDiagram
 - `(Genre)-[:SUBGENRE_OF]->(Genre)`: Enables hierarchical graph traversal.
 
 **Dataset Statistics:**
-- **Articles:** ~5,339 processed.
-- **Nodes:** ~47,584 (Artists, Albums, Tracks, Genres).
+- **Articles:** ~4,679 processed.
+- **Nodes:** ~47,584 (Artists, Releases, Genres).
 - **Edges:** ~88,828.
 
 ### 3. Vector Database (Chroma)

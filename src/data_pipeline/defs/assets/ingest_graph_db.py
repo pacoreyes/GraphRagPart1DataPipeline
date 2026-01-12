@@ -48,13 +48,13 @@ def _create_indexes(driver: Driver, context: AssetExecutionContext) -> None:
 
 @asset(
     name="ingest_graph_db",
-    description="Ingests in Neo4j Artists, Albums, Tracks, and Genres.",
+    description="Ingests in Neo4j Artists, Releases, Tracks, and Genres.",
 )
 def ingest_graph_db(
     context: AssetExecutionContext, 
     neo4j: Neo4jResource,
     artists: pl.LazyFrame,
-    albums: pl.LazyFrame,
+    releases: pl.LazyFrame,
     tracks: pl.LazyFrame,
     genres: pl.LazyFrame
 ) -> MaterializeResult:
@@ -64,7 +64,7 @@ def ingest_graph_db(
     # Materialize LazyFrames to DataFrames for iteration
     # We must collect because we need to iterate in batches for Neo4j
     artists_df = artists.collect()
-    albums_df = albums.collect()
+    releases_df = releases.collect()
     tracks_df = tracks.collect()
     genres_df = genres.collect()
 
@@ -118,10 +118,10 @@ def ingest_graph_db(
                 artist_count += len(batch_data)
         context.log.info(f"Loaded {artist_count} artists.")
 
-        # 3. Albums
-        album_count = 0
+        # 3. Releases
+        release_count = 0
         # noinspection SqlNoDataSourceInspection
-        album_query = """
+        release_query = """
         UNWIND $batch AS row
         CREATE (:Album {
             id: row.id, 
@@ -131,12 +131,12 @@ def ingest_graph_db(
             genres: row.genres
         });
         """
-        if not albums_df.is_empty():
-            for batch_df in albums_df.iter_slices(n_rows=batch_size):
+        if not releases_df.is_empty():
+            for batch_df in releases_df.iter_slices(n_rows=batch_size):
                 batch_data = batch_df.to_dicts()
-                execute_cypher(driver, album_query, {"batch": batch_data})
-                album_count += len(batch_data)
-        context.log.info(f"Loaded {album_count} albums.")
+                execute_cypher(driver, release_query, {"batch": batch_data})
+                release_count += len(batch_data)
+        context.log.info(f"Loaded {release_count} releases.")
 
         # 4. Tracks
         track_count = 0
@@ -242,13 +242,13 @@ def ingest_graph_db(
             "total_records_input": {
                 "genres": len(genres_df),
                 "artists": len(artists_df),
-                "albums": len(albums_df),
+                "releases": len(releases_df),
                 "tracks": len(tracks_df)
             },
             "nodes_ingested": {
                 "genres": genre_count,
                 "artists": artist_count,
-                "albums": album_count,
+                "releases": release_count,
                 "tracks": track_count
             },
             "status": "success"

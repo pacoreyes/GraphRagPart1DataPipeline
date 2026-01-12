@@ -75,10 +75,10 @@ def check_artists_completeness(artists: pl.LazyFrame):
     )
 
 
-@asset_check(asset="albums")
-def check_albums_per_artist(albums: pl.LazyFrame):
-    """Checks that we have a reasonable average of albums per artist."""
-    stats = albums.select([
+@asset_check(asset="releases")
+def check_releases_per_artist(releases: pl.LazyFrame):
+    """Checks that we have a reasonable average of releases per artist."""
+    stats = releases.select([
         pl.len().alias("count"),
         pl.col("artist_id").n_unique().alias("unique_artists")
     ]).collect().to_dicts()[0]
@@ -89,11 +89,11 @@ def check_albums_per_artist(albums: pl.LazyFrame):
     if count == 0:
         return AssetCheckResult(passed=True)
         
-    avg_albums = count / unique_artists if unique_artists > 0 else 0
+    avg_releases = count / unique_artists if unique_artists > 0 else 0
     
     return AssetCheckResult(
-        passed=bool(avg_albums >= 1.0),
-        metadata={"avg_albums_per_artist": float(avg_albums)}
+        passed=bool(avg_releases >= 1.0),
+        metadata={"avg_releases_per_artist": float(avg_releases)}
     )
 
 
