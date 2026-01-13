@@ -59,6 +59,14 @@ async def run_extraction_pipeline(
             query = get_query_function(
                 **query_params, limit=batch_size, offset=offset
             )
+            # Fallback interpolation for literal placeholders like {start_year}
+            # that might remain if the query function used double braces in an f-string.
+            all_params = {**query_params, "limit": batch_size, "offset": offset}
+            for key, value in all_params.items():
+                placeholder = f"{{{key}}}"
+                if placeholder in query:
+                    query = query.replace(placeholder, str(value))
+
             return await _fetch_sparql_query_async(
                 context,
                 query,

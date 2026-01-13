@@ -18,17 +18,11 @@ from data_pipeline.defs.assets.extract_genres import extract_genres
 from data_pipeline.utils.network_helpers import AsyncClient
 
 @pytest.mark.asyncio
-@patch("data_pipeline.defs.assets.extract_genres.pl.scan_ndjson")
-@patch("data_pipeline.defs.assets.extract_genres.async_append_jsonl")
 @patch("data_pipeline.defs.assets.extract_genres.async_fetch_wikidata_entities_batch")
 @patch("data_pipeline.defs.assets.extract_genres.settings")
-@patch("data_pipeline.defs.assets.extract_genres.shutil.move")
 async def test_extract_genres(
-    mock_move,
     mock_settings,
-    mock_fetch_entities,
-    mock_append,
-    mock_scan
+    mock_fetch_entities
 ):
     """
     Test the genres asset.
@@ -37,15 +31,11 @@ async def test_extract_genres(
     mock_settings.WIKIDATA_ACTION_BATCH_SIZE = 10
     mock_settings.WIKIDATA_SPARQL_REQUEST_TIMEOUT = 10
     mock_settings.WIKIDATA_CONCURRENT_REQUESTS = 2
-    
-    # Mock Paths to control .exists() behavior
-    temp_path_mock = MagicMock()
-    final_path_mock = MagicMock()
-    temp_path_mock.exists.return_value = True
-    final_path_mock.exists.return_value = True # For row count check
-    
-    mock_settings.TEMP_DIRPATH.__truediv__.return_value = temp_path_mock
-    mock_settings.DATASETS_DIRPATH.__truediv__.return_value = final_path_mock
+    mock_settings.WIKIDATA_FALLBACK_LANGUAGES = ["en", "de"]
+    mock_settings.WIKIDATA_ACTION_API_URL = "http://wd.api"
+    mock_settings.WIKIDATA_CACHE_DIRPATH = Path("/tmp/wd_cache")
+    mock_settings.WIKIDATA_ACTION_RATE_LIMIT_DELAY = 0
+    mock_settings.DEFAULT_REQUEST_HEADERS = {"User-Agent": "test"}
 
     # Mock Input DataFrame
     mock_artists_df = pl.DataFrame({
@@ -112,27 +102,16 @@ async def test_extract_genres(
 
     mock_fetch_entities.side_effect = side_effect_fetch
 
-    # Mock Scan
-    mock_scan.return_value = pl.DataFrame({"name": ["Genre A"]}).lazy()
-
     # Execution
-    result = await extract_genres(context, mock_wikidata, mock_artists_df)
+    result_lf = await extract_genres(context, mock_wikidata, mock_artists_df)
 
-    assert isinstance(result, MaterializeResult)
-    assert mock_append.called
+    assert isinstance(result_lf, pl.LazyFrame)
     
-    # Check if shutil.move was called correctly
-    assert mock_move.called
-    args, _ = mock_move.call_args
-    assert args[0] == temp_path_mock
-    assert args[1] == final_path_mock
-    
-    # Verify that the processing logic picked up parents
-    first_call_args = mock_append.call_args_list[0]
-    data_written = first_call_args[0][1]
+    # Check data (must collect)
+    df = result_lf.collect()
+    assert len(df) == 4
     
     # Check Q101 data
-    q101_record = next((r for r in data_written if r["id"] == "Q101"), None)
-    if q101_record:
-        assert q101_record["name"] == "Genre A"
-        assert q101_record["parent_ids"] == ["Q999"]
+    q101_record = df.filter(pl.col("id") == "Q101").to_dicts()[0]
+    assert q101_record["name"] == "Genre A"
+    assert q101_record["parent_ids"] == ["Q999"]

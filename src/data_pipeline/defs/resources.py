@@ -19,7 +19,7 @@ from dagster import (
 from neo4j import GraphDatabase, Driver
 
 from data_pipeline.settings import settings
-from .io_managers import PolarsJSONLIOManager
+from .io_managers import PolarsJSONLIOManager, PolarsParquetIOManager
 
 
 class LastFmResource(ConfigurableResource):
@@ -161,10 +161,11 @@ resource_defs: dict[str, Any] = {
     ),
     "wikipedia": WikipediaResource(
         api_url=settings.WIKIPEDIA_API_URL,
-        timeout=settings.WIKIPEDIA_REQUEST_TIMEOUT,
-        rate_limit_delay=settings.WIKIPEDIA_RATE_LIMIT_DELAY,
+        timeout=60,  # Default timeout for Wikipedia
+        rate_limit_delay=settings.WIKIPEDIA_RATE_LIMIT_DELAY
     ),
-    "io_manager": PolarsJSONLIOManager(base_dir=str(settings.DATASETS_DIRPATH))
+    "io_manager": PolarsParquetIOManager(base_dir=str(settings.DATASETS_DIRPATH)),
+    "jsonl_io_manager": PolarsJSONLIOManager(base_dir=str(settings.DATASETS_DIRPATH))
 }
 
 # Export as Definitions for automatic loading

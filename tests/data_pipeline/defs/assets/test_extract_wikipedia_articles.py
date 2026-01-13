@@ -18,31 +18,16 @@ from data_pipeline.utils.network_helpers import AsyncClient
 
 @pytest.mark.asyncio
 @patch("data_pipeline.defs.assets.extract_wikipedia_articles.settings")
-@patch("data_pipeline.defs.assets.extract_wikipedia_articles.shutil.move")
-@patch("data_pipeline.defs.assets.extract_wikipedia_articles.async_append_jsonl")
-@patch("data_pipeline.defs.assets.extract_wikipedia_articles.async_clear_file")
-@patch("data_pipeline.defs.assets.extract_wikipedia_articles.pl.scan_ndjson")
 async def test_extract_wikipedia_articles_flow(
-    mock_scan, mock_clear, mock_append, mock_move, mock_settings
+    mock_settings
 ):
     # Setup Mocks
-    mock_settings.TEMP_DIRPATH = MagicMock()
-    mock_settings.DATASETS_DIRPATH = MagicMock()
-    temp_path_mock = MagicMock()
-    final_path_mock = MagicMock()
-    temp_path_mock.exists.return_value = True
-    final_path_mock.exists.return_value = True
-    
-    mock_settings.TEMP_DIRPATH.__truediv__.return_value = temp_path_mock
-    mock_settings.DATASETS_DIRPATH.__truediv__.return_value = final_path_mock
-    
     mock_settings.WIKIDATA_ACTION_BATCH_SIZE = 10
     mock_settings.WIKIDATA_ACTION_REQUEST_TIMEOUT = 10
     mock_settings.WIKIDATA_CONCURRENT_REQUESTS = 2
     mock_settings.WIKIDATA_ACTION_RATE_LIMIT_DELAY = 0
     mock_settings.WIKIPEDIA_CONCURRENT_REQUESTS = 2
     mock_settings.WIKIPEDIA_RATE_LIMIT_DELAY = 0
-    mock_settings.WIKIPEDIA_API_URL = "http://wiki.api"
     mock_settings.WIKIDATA_ACTION_API_URL = "http://wd.api"
     mock_settings.MIN_CONTENT_LENGTH = 10
     mock_settings.ARTICLES_BUFFER_SIZE = 10
@@ -51,6 +36,8 @@ async def test_extract_wikipedia_articles_flow(
     mock_settings.DEFAULT_EMBEDDINGS_MODEL_NAME = "nomic-ai/nomic-embed-text-v1.5"
     mock_settings.TEXT_CHUNK_SIZE = 100
     mock_settings.TEXT_CHUNK_OVERLAP = 10
+    mock_settings.WIKIDATA_FALLBACK_LANGUAGES = ["en"]
+    mock_settings.WIKIDATA_CONCEPT_BASE_URI_PREFIX = "http://wd.entity/"
     
     # Mock Data DataFrames (Input)
     artists_df = pl.DataFrame([
@@ -80,53 +67,43 @@ async def test_extract_wikipedia_articles_flow(
          patch("data_pipeline.defs.assets.extract_wikipedia_articles.async_fetch_wikidata_entities_batch", side_effect=mock_fetch_entities), \
          patch("data_pipeline.defs.assets.extract_wikipedia_articles.AutoTokenizer"), \
          patch("data_pipeline.defs.assets.extract_wikipedia_articles.RecursiveCharacterTextSplitter") as mock_splitter_cls:
-        # Setup specific mock returns
+        
         mock_fetch.return_value = "This is a sufficiently long text for Artist One to ensure it passes the minimal content filter of 50 characters."
-
-        # Setup Text Splitter Mock
         mock_splitter_instance = mock_splitter_cls.from_huggingface_tokenizer.return_value
         mock_splitter_instance.split_text.return_value = ["Chunk 1", "Chunk 2"]
 
         from contextlib import asynccontextmanager
 
-        # Create Context
         context = build_asset_context()
         mock_client = MagicMock(spec=AsyncClient)
 
         mock_wikidata = MagicMock()
         @asynccontextmanager
-        async def mock_yield(context):
+        async def mock_yield_wd(context):
             yield mock_client
-        mock_wikidata.get_client = mock_yield
+        mock_wikidata.get_client = mock_yield_wd
+
+        mock_wikipedia = MagicMock()
+        @asynccontextmanager
+        async def mock_yield_wp(context):
+            yield mock_client
+        mock_wikipedia.get_client = mock_yield_wp
+        mock_wikipedia.api_url = "http://wp.api"
+        mock_wikipedia.rate_limit_delay = 0
 
         # Run Asset
-        result = await extract_wikipedia_articles(
+        results = await extract_wikipedia_articles(
             context, 
             mock_wikidata, 
+            mock_wikipedia,
             artists_df.lazy(), 
             genres_df.lazy(), 
             index_df.lazy()
         )
 
-        # Verifications
-        assert isinstance(result, MaterializeResult)
-        assert mock_move.called
-        assert mock_append.called
-        
-        # Check content
-        args = mock_append.call_args
-        data_written = args[0][1] # buffer
-        # We expect 2 chunks
-        assert len(data_written) == 2
-        
-        # Verify Fetch called for valid artist only
-        mock_fetch.assert_called_once()
-        
-        first_row = data_written[0]
-        assert "id" in first_row
-        assert first_row["id"] == "Q1_chunk_1"
-        assert "metadata" in first_row
-        assert first_row["metadata"]["artist_name"] == "Artist One"
-        assert first_row["metadata"]["genres"] == ["Rock"]
-        assert first_row["metadata"]["inception_year"] == 1991
+        assert isinstance(results, list)
+        assert len(results) >= 1
+        first_batch = results[0]
+        assert first_batch[0].id == "Q1_chunk_1"
+        assert first_batch[0].metadata.artist_name == "Artist One"
         

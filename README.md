@@ -1,8 +1,8 @@
 # GraphRAG - Part 1: Data Pipeline
 
-*Last update: January 10, 2026*
+*Last update: January 14, 2026*
 
-This repo is part of a larger project **GraphRAG** app, in which I show how the GraphRAG pattern works. 
+This repo is part of a larger project **GraphRAG** app, in which I show how the GraphRAG pattern works.
 
 Part 1 is a basic Data Pipeline made with **Dagster**, which orchestrates the data ingestion from multiple sources for making a knowledge graph (in **Neo4j** graph database) and an embedding model (in **ChromaDB** vector database) for a RAG system. This app is ready to be deployed on the cloud in a Docker container.
 
@@ -17,6 +17,7 @@ This data pipeline orchestrates data ingestion from multiple sources to build a 
 - **Wikidata API** (using SPARQL & Action API)
 - **Wikipedia API** (Text Content)
 - **Last.fm API** (Metadata & Tags)
+- **MusicBrainz API** (Releases & Tracks)
 
 The goal is to prepare unstructured data (Wikipedia articles of musicians, bands, and artists) and split it into chunks enriched with structured metadata. This prepares the data for a hybrid search approach:
 
@@ -27,47 +28,182 @@ We leverage **Polars** for high-performance data transformation, **Pydantic** fo
 
 ## Tech Stack
 
-- **Orchestration:** [Dagster](https://dagster.io/) (Assets, Resources, Partitions, Asset Checks)
+- **Orchestration:** [Dagster](https://dagster.io/) (Assets, Resources, Partitions, Asset Checks, I/O Managers)
 - **Databases:** [Neo4j](https://neo4j.com/) (Graph), [ChromaDB](https://www.trychroma.com/) (Vector)
 - **Data Engineering:** [Polars](https://pola.rs/) (manipulation), [Msgspec](https://github.com/jcrist/msgspec) (serialization), [Ftfy](https://github.com/rspeer/python-ftfy) (cleaning)
 - **Data Validation & Config:** [Pydantic](https://pydantic.dev/), [Pydantic Settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/)
 - **AI & ML:** [PyTorch](https://pytorch.org/), [Transformers](https://huggingface.co/docs/transformers/index), [Nomic](https://atlas.nomic.ai/) (Embeddings), [LangChain](https://www.langchain.com/) (Text Splitters), [Einops](https://einops.rocks/)
-- **Networking & Utils:** [HTTPX](https://www.python-httpx.org/) (Async), [Structlog](https://www.structlog.org/), [Tqdm](https://tqdm.github.io/)
+- **Networking & Utils:** [curl-cffi](https://github.com/yifeikong/curl_cffi) (Async HTTP with browser impersonation), [Structlog](https://www.structlog.org/), [Tqdm](https://tqdm.github.io/)
 - **Language & Tooling:** [Python 3.13+](https://www.python.org/), [uv](https://docs.astral.sh/uv/), [Ruff](https://docs.astral.sh/ruff/), [Ty](https://github.com/astral-sh/ty), [Bandit](https://bandit.readthedocs.io/)
 
-## Project Structure (Clean Architecture)
+---
 
-The project follows a layered architecture to separate business logic from orchestration infrastructure, ensuring maintainability and scalability.
+## Architecture Overview
 
-### Core Components
+This project implements a **strict separation of concerns** following Dagster's philosophy, dividing the codebase into distinct layers with clear responsibilities.
 
-*   **`src/data_pipeline/defs/assets/` (The "What")**:
-    *   Defines the **Business Logic**. Each file represents a Data Asset (e.g., `artists`, `albums`) and the high-level recipe to create it.
-    *   Assets focus on *orchestration*: they declare their dependencies, request resources, and call utility functions to process data.
+### Architecture Visualization
 
-*   **`src/data_pipeline/defs/resources.py` (The Infrastructure)**:
-    *   Defines **Environment Connections**. Handles the lifecycle of connections to Neo4j, External APIs (Wikidata, Last.fm), and file storage.
-    *   Allows assets to remain environment-agnostic (swappable between Dev/Prod/Test).
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                         DAGSTER DEFINITIONS LAYER                            │
+│                    "The How" - Infrastructure & Configuration                │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────────┐  │
+│  │  definitions.py │  │   resources.py  │  │     io_managers.py          │  │
+│  │  (Entry Point)  │  │ (Factories/DI)  │  │ (Parquet/JSONL Persistence) │  │
+│  └────────┬────────┘  └────────┬────────┘  └────────────┬────────────────┘  │
+│           │                    │                        │                   │
+│  ┌────────┴────────┐  ┌────────┴────────┐  ┌───────────┴───────────┐       │
+│  │   checks.py     │  │  partitions.py  │  │    settings.py        │       │
+│  │ (Quality Gates) │  │  (By Decade)    │  │ (pydantic-settings)   │       │
+│  └─────────────────┘  └─────────────────┘  └───────────────────────┘       │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                          ASSET LAYER (defs/assets/)                          │
+│                   "The What" - Business Logic & Transformation               │
+│  ┌────────────────┐  ┌──────────────────┐  ┌────────────────────────┐       │
+│  │ build_artist   │  │  extract_artists │  │  extract_releases      │       │
+│  │ _index.py      │──▶│  .py             │──▶│  .py                   │       │
+│  │ (Wikidata)     │  │  (Wikidata+Last) │  │  (MusicBrainz)         │       │
+│  └────────────────┘  └────────┬─────────┘  └───────────┬────────────┘       │
+│                               │                        │                    │
+│  ┌────────────────────────────┼────────────────────────┤                    │
+│  │                            ▼                        ▼                    │
+│  │  ┌──────────────────┐  ┌────────────────┐  ┌─────────────────────┐       │
+│  │  │ extract_genres   │  │ extract_tracks │  │ extract_wikipedia   │       │
+│  │  │ .py              │  │ .py            │  │ _articles.py        │       │
+│  │  └──────────────────┘  └────────────────┘  └─────────────────────┘       │
+│  │                                                      │                   │
+│  │                                    ┌─────────────────┘                   │
+│  │                                    ▼                                     │
+│  │                          ┌───────────────────┐                           │
+│  │                          │  ingest_graph_db  │                           │
+│  │                          │  .py (Neo4j)      │                           │
+│  │                          └───────────────────┘                           │
+│  └──────────────────────────────────────────────────────────────────────────│
+└──────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                         UTILITIES LAYER (utils/)                             │
+│                   Domain-Agnostic, Reusable Components                       │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                    NETWORK & I/O PRIMITIVES                         │    │
+│  │  ┌─────────────────────┐  ┌────────────────────────────────────┐   │    │
+│  │  │  network_helpers.py │  │      io_helpers.py                 │   │    │
+│  │  │  (HTTP retries,     │  │  (JSON/text files,                 │   │    │
+│  │  │   concurrency)      │  │   cache key generation)            │   │    │
+│  │  └─────────────────────┘  └────────────────────────────────────┘   │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                      DOMAIN ADAPTERS (API Clients)                  │    │
+│  │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐     │    │
+│  │  │ wikidata_       │  │ musicbrainz_    │  │ lastfm_         │     │    │
+│  │  │ helpers.py      │  │ helpers.py      │  │ helpers.py      │     │    │
+│  │  └─────────────────┘  └─────────────────┘  └─────────────────┘     │    │
+│  │  ┌─────────────────┐  ┌─────────────────┐                          │    │
+│  │  │ wikipedia_      │  │ neo4j_          │                          │    │
+│  │  │ helpers.py      │  │ helpers.py      │                          │    │
+│  │  └─────────────────┘  └─────────────────┘                          │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                     DATA TRANSFORMATION                              │    │
+│  │  ┌───────────────────────────────────────────────────────────────┐  │    │
+│  │  │  data_transformation_helpers.py                                │  │    │
+│  │  │  (Text normalization, deduplication, Unicode fixing)           │  │    │
+│  │  └───────────────────────────────────────────────────────────────┘  │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
 
-*   **`src/data_pipeline/utils/` (The "How-To")**:
-    *   Contains **Reusable, Low-Level Logic**. This is the toolbox used by assets.
-    *   **Role 1: Reusability (DRY):** Shared logic like `make_async_request_with_retries` or `normalize_and_clean_text`.
-    *   **Role 2: Complexity Hiding:** Encapsulates messy details (SPARQL query construction, JSON parsing, Unicode fixing) to keep Asset files clean and readable.
-    *   **Role 3: Testability:** Functions are designed to be "pure" or generic, making them easy to unit test in isolation.
-    *   *Key Modules:*
-        *   `network_helpers.py`: HTTP request utilities with retries and concurrency control.
-        *   `io_helpers.py`: Caching, file I/O, and serialization (JSON/JSONL) with sparse output.
-        *   `data_transformation_helpers.py`: Domain-agnostic text cleaning and Polars DataFrame operations.
-        *   `wikidata_helpers.py`, `wikipedia_helpers.py`, `lastfm_helpers.py`, `musicbrainz_helpers.py`: API adapters.
-*   **`src/data_pipeline/defs/checks.py` (The Quality Gate)**:
-    *   Defines **Automated Data Quality Checks**. Verifies the integrity of assets *after* they are materialized (e.g., "Are there >0 null IDs?", "Is the album count per artist reasonable?").
+---
+
+## Separation of Concerns
+
+The architecture strictly separates **"The What"** (business logic) from **"The How"** (infrastructure), following Dagster best practices.
+
+### 1. The `assets/` Folder: "The What" (Business Logic)
+
+This folder contains the **Data Definition Graph**.
+
+| Aspect | Description |
+|--------|-------------|
+| **Role** | Defines *what* data exists, *how* it is computed, and its dependencies |
+| **Content** | Pure transformation logic. Takes data in (as parameters) and returns data out (as return values) |
+| **Change Frequency** | **High**. This is where you edit code when business requirements change |
+| **Dagster Rule** | Assets are unaware of *where* they run or *where* data is stored. They "ask" for a resource and "return" a dataframe |
+
+**Key Design Patterns:**
+- Assets return `pl.LazyFrame`, `list[Model]`, or `MaterializeResult` — never write files directly
+- Domain-specific constants (e.g., `WIKIDATA_PROP_GENRE = "P136"`) belong in assets, not utils
+- Validation logic and business rules are implemented within assets
+
+### 2. The `defs/` Root Files: "The How" (Infrastructure)
+
+These files define the **Execution Environment**.
+
+| File | Role | Change Frequency |
+|------|------|-----------------|
+| `resources.py` | Connection factories (Neo4j, HTTP clients). Handles secrets, timeouts, connection pooling | Low |
+| `io_managers.py` | Bridge between Python memory and File System/Cloud Storage. Handles serialization (JSONL vs Parquet) and path organization | Low |
+| `partitions.py` | Slicing strategy. Defines the "shape" of pipeline execution (by decade) | Low |
+| `checks.py` | Quality contracts. Defines rules the data must obey after materialization | Medium |
+
+**Key Design Patterns:**
+- **Explicit Resource Factories**: Resources expose `get_client()` context managers rather than implicit lifecycle hooks
+- **Secrets via EnvVar**: `resources.py` uses `EnvVar("NEO4J_PASSWORD")` for secrets, not `settings.py`
+- **Streaming I/O**: `io_managers.py` uses `sink_parquet()` for LazyFrames (O(1) memory)
+
+### 3. The `utils/` Folder: "The How-To" (Reusable Logic)
+
+Contains **domain-agnostic, reusable helpers** that can be used across different projects.
+
+| Module | Responsibility |
+|--------|---------------|
+| `network_helpers.py` | HTTP requests with exponential backoff, concurrency control, async generators |
+| `io_helpers.py` | JSON/text file I/O, cache key generation, async file operations |
+| `data_transformation_helpers.py` | Text normalization, Unicode fixing (ftfy), Polars expressions |
+| `wikidata_helpers.py` | Wikidata SPARQL & Action API adapter with caching |
+| `wikipedia_helpers.py` | Wikipedia API adapter with text caching |
+| `musicbrainz_helpers.py` | MusicBrainz API adapter with pagination |
+| `lastfm_helpers.py` | Last.fm API adapter with response caching |
+| `neo4j_helpers.py` | Generic Cypher execution utilities |
+
+**Design Rules for Utils:**
+- No global config: Utils never import `settings` directly — configuration is passed as arguments
+- Dependency injection: API keys, paths, URLs, timeouts passed as function parameters
+- No domain logic: Schema definitions (like Neo4j indexes) belong in assets, not utils
 
 ### The "Use" Hierarchy
 
-1.  **Resources** (`defs/resources.py`): Provide the raw connection (e.g., `httpx.AsyncClient`, `Neo4j Driver`).
-2.  **Utils** (`utils/*.py`): Use the connection to perform specific actions (e.g., `fetch_sparql_query`, `clear_database`) or pure data transformations.
-3.  **Assets** (`defs/assets/*.py`): Orchestrate the Utils to achieve a business goal (e.g., "Extract Albums").
-4.  **Checks** (`defs/checks.py`): Verify the final output of the Assets ensuring data trust.
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  1. RESOURCES (defs/resources.py)                                   │
+│     Provide raw connections (AsyncClient, Neo4j Driver)             │
+│                              │                                      │
+│                              ▼                                      │
+│  2. UTILS (utils/*.py)                                              │
+│     Use connections to perform specific actions                     │
+│     (fetch_sparql_query, async_write_json_file)                     │
+│                              │                                      │
+│                              ▼                                      │
+│  3. ASSETS (defs/assets/*.py)                                       │
+│     Orchestrate Utils to achieve business goals                     │
+│     (Extract Artists, Build Knowledge Graph)                        │
+│                              │                                      │
+│                              ▼                                      │
+│  4. I/O MANAGERS (defs/io_managers.py)                              │
+│     Persist asset outputs to storage (Parquet, JSONL)               │
+│                              │                                      │
+│                              ▼                                      │
+│  5. CHECKS (defs/checks.py)                                         │
+│     Verify final output quality and data trust                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+---
 
 ## Data Architecture
 
@@ -77,18 +213,73 @@ The pipeline transforms raw data from external APIs into two optimized formats: 
 
 ```mermaid
 graph TD
-    A[Wikidata SPARQL] -->|Partitioned by Decade| B(Artist Index Partitions)
-    B -->|Fan-In Merge| C[Artist Index Merged]
-    C -->|Fetch Details| D[extract_artists]
-    D --> E[extract_albums]
-    E --> F[extract_tracks]
-    F --> G[extract_genres]
-    D & E & F & G --> H[ingest_graph_db]
-    H -->|Nodes & Edges| I[(Neo4j Graph DB)]
-    D -->|Wikipedia URLs| J[extract_wikipedia_articles]
-    J -->|Text Content| K[Text Splitter]
-    K -->|Enrich w/ Metadata| L[RAG Documents JSONL]
+    subgraph "Stage 1: Artist Discovery"
+        A[Wikidata SPARQL] -->|Partitioned by Decade| B(build_artist_index_by_decade)
+        B -->|AllPartitionMapping| C[artist_index]
+    end
+
+    subgraph "Stage 2: Data Enrichment"
+        C -->|Wikidata + Last.fm| D[extract_artists]
+        D --> E[extract_releases]
+        E --> F[extract_tracks]
+        D --> G[extract_genres]
+    end
+
+    subgraph "Stage 3: Knowledge Graph"
+        D & E & F & G --> H[ingest_graph_db]
+        H -->|Nodes & Relationships| I[(Neo4j Aura)]
+    end
+
+    subgraph "Stage 4: RAG Preparation"
+        D -->|Wikipedia URLs| J[extract_wikipedia_articles]
+        J -->|Clean & Chunk| K[Text Splitter]
+        K -->|Enrich Metadata| L[wikipedia_articles.jsonl]
+        L -->|Embeddings| M[(ChromaDB)]
+    end
+
+    style A fill:#e1f5fe
+    style I fill:#c8e6c9
+    style M fill:#fff3e0
 ```
+
+### Asset Dependency Graph
+
+| Asset | Input Dependencies | Output Type | I/O Manager |
+|-------|-------------------|-------------|-------------|
+| `build_artist_index_by_decade` | None (Wikidata SPARQL) | `pl.LazyFrame` | Parquet |
+| `artist_index` | `build_artist_index_by_decade` (all partitions) | `pl.LazyFrame` | Parquet |
+| `artists` | `artist_index` | `list[Artist]` | Parquet |
+| `genres` | `artists` | `pl.LazyFrame` | Parquet |
+| `releases` | `artists` | `list[Release]` | Parquet |
+| `tracks` | `releases` | `list[Track]` | Parquet |
+| `wikipedia_articles` | `artists`, `genres`, `artist_index` | `list[list[Article]]` | JSONL |
+| `ingest_graph_db` | `artists`, `releases`, `tracks`, `genres` | `MaterializeResult` | None (sink) |
+
+### Partitioning Strategy
+
+The pipeline uses **decade-based partitioning** for the initial artist discovery phase:
+
+```python
+DECADES_TO_EXTRACT = {
+    "1930s": (1930, 1939),
+    "1940s": (1940, 1949),
+    "1950s": (1950, 1959),
+    "1960s": (1960, 1969),
+    "1970s": (1970, 1979),
+    "1980s": (1980, 1989),
+    "1990s": (1990, 1999),
+    "2000s": (2000, 2009),
+    "2010s": (2010, 2019),
+    "2020s": (2020, 2029),
+}
+```
+
+**Benefits:**
+- Parallelizes SPARQL queries across decades (10 concurrent runs)
+- Provides natural checkpointing (failed decade can be retried independently)
+- Keeps memory usage constant O(1) regardless of total dataset size
+
+---
 
 ### 1. Unstructured Data (RAG Preparation)
 
@@ -119,7 +310,7 @@ erDiagram
     Album ||--o{ Genre : HAS_GENRE
     Track ||--o{ Genre : HAS_GENRE
     Genre ||--o{ Genre : SUBGENRE_OF
-    
+
     Artist {
         string id
         string name
@@ -173,13 +364,123 @@ To enable semantic search, the processed text chunks are indexed in **ChromaDB**
 
 The `wikipedia_articles.jsonl` dataset serves as the source of truth. A specialized ingestion process (conceptually part of the RAG pipeline) reads these files, generates embeddings using the Nomic model, and upserts them into the vector store. This allows for natural language queries like "Which electronic artists were influenced by 80s synth-pop?".
 
+---
+
+## Advanced Design Patterns
+
+### Lazy Evaluation & Streaming
+
+The pipeline enforces **lazy evaluation** throughout to ensure O(1) memory usage:
+
+```python
+# Assets return LazyFrames, not eager DataFrames
+@asset
+def artist_index(...) -> pl.LazyFrame:
+    return clean_lf  # Never .collect() inside asset
+
+# I/O Managers handle streaming writes
+class PolarsParquetIOManager:
+    def handle_output(self, context, obj):
+        if isinstance(obj, pl.LazyFrame):
+            obj.sink_parquet(path)  # Stream directly to disk
+```
+
+### Sparse JSONL Output
+
+For the RAG dataset, we use **sparse JSON** to minimize storage:
+
+```python
+# Only non-null fields are written
+{"id": "Q123_chunk_1", "metadata": {"title": "Daft Punk", "genres": ["House"]}}
+# NOT: {"id": "...", "metadata": {"title": "...", "genres": [...], "aliases": null, "tags": null}}
+```
+
+### Resource Factory Pattern
+
+Resources expose explicit factory methods rather than implicit lifecycle hooks:
+
+```python
+class Neo4jResource(ConfigurableResource):
+    uri: str
+    username: str
+    password: str
+
+    @contextmanager
+    def get_driver(self, context) -> Generator[Driver, None, None]:
+        driver = GraphDatabase.driver(self.uri, auth=(self.username, self.password))
+        try:
+            yield driver
+        finally:
+            driver.close()
+
+# Usage in asset
+@asset
+def ingest_graph_db(neo4j: Neo4jResource, ...):
+    with neo4j.get_driver(context) as driver:
+        # Use driver
+```
+
+### Caching Strategy
+
+Multi-level caching reduces API calls and enables resumable runs:
+
+| Cache Level | Location | Format | Purpose |
+|-------------|----------|--------|---------|
+| Wikidata entities | `.cache/wikidata/{qid}.json` | JSON | Entity metadata |
+| Wikipedia articles | `.cache/wikipedia/{qid}.txt` | Plain text | Article content |
+| MusicBrainz releases | `.cache/musicbrainz/{mbid}_release.json` | JSON | Release groups |
+| Last.fm data | `.cache/last_fm/{hash}.json` | JSON | Tags, similar artists |
+
+---
+
+## Project Structure
+
+```
+graph_rag_data_pipeline_1/
+├── src/
+│   └── data_pipeline/
+│       ├── definitions.py          # Dagster entry point
+│       ├── settings.py             # Pydantic settings (paths, timeouts)
+│       ├── models.py               # Domain models (msgspec Structs)
+│       ├── defs/
+│       │   ├── assets/             # Business logic layer
+│       │   │   ├── build_artist_index.py
+│       │   │   ├── extract_artists.py
+│       │   │   ├── extract_genres.py
+│       │   │   ├── extract_releases.py
+│       │   │   ├── extract_tracks.py
+│       │   │   ├── extract_wikipedia_articles.py
+│       │   │   └── ingest_graph_db.py
+│       │   ├── resources.py        # Connection factories
+│       │   ├── io_managers.py      # Parquet/JSONL persistence
+│       │   ├── partitions.py       # Decade partitioning
+│       │   └── checks.py           # Data quality gates
+│       └── utils/                  # Reusable helpers
+│           ├── network_helpers.py
+│           ├── io_helpers.py
+│           ├── data_transformation_helpers.py
+│           ├── wikidata_helpers.py
+│           ├── wikipedia_helpers.py
+│           ├── musicbrainz_helpers.py
+│           ├── lastfm_helpers.py
+│           └── neo4j_helpers.py
+├── tests/                          # Mirrors src/ structure
+├── scripts/                        # Standalone CLI utilities
+├── data_volume/                    # Local data & caches
+│   ├── .cache/                     # API response caches
+│   └── datasets/                   # Materialized assets
+└── .env                            # Secrets (not committed)
+```
+
+---
+
 ## Getting Started
 
 ### Prerequisites
 
 - **Python 3.13+**
 - [**uv**](https://docs.astral.sh/uv/) (Astral's Python package manager)
-- A **Neo4j** instance (Aura cloud or local)
+- A **Neo4j** instance (Aura cloud recommended)
 
 ### Installation & Setup
 
@@ -199,7 +500,7 @@ To ensure replicability, follow these steps to set up the environment and depend
 
 3.  **Configure Environment Variables:**
     The application requires several API keys and database credentials. Create a `.env` file in the root directory and populate it with your keys:
-    
+
     ```env
     # Neo4j Graph Database
     NEO4J_URI=neo4j+s://<your-instance-id>.databases.neo4j.io
@@ -252,9 +553,27 @@ uv run ruff check .
 uv run bandit -r src/
 ```
 
+---
+
+## Data Quality Checks
+
+The pipeline includes automated **asset checks** that validate data after materialization:
+
+| Check | Asset | Validation Rule |
+|-------|-------|-----------------|
+| `check_artist_index_integrity` | `artist_index` | No null IDs/names, no duplicates |
+| `check_artists_completeness` | `artists` | ≥50% of artists have genres or tags |
+| `check_releases_per_artist` | `releases` | Average releases per artist ≥ 1 |
+| `check_tracks_schema` | `tracks` | No null titles or album_ids |
+| `check_genres_quality` | `genres` | No null genre names |
+
+---
+
 ## Learn More
 
 - [Dagster Documentation](https://docs.dagster.io/)
 - [Neo4j Graph Database](https://neo4j.com/docs/)
 - [uv Documentation](https://docs.astral.sh/uv/)
 - [Nomic AI Documentation](https://docs.nomic.ai/)
+- [Polars User Guide](https://docs.pola.rs/)
+- [MusicBrainz API](https://musicbrainz.org/doc/MusicBrainz_API)

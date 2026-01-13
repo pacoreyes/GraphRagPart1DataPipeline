@@ -64,7 +64,10 @@ async def make_async_request_with_retries(
     try:
         for attempt in range(max_retries):
             try:
-                request_args: dict[str, Any] = {"headers": headers}
+                request_args: dict[str, Any] = {}
+                if headers is not None:
+                    request_args["headers"] = headers
+
                 if method.upper() == "GET":
                     request_args["params"] = params
                 elif method.upper() == "POST":
@@ -145,7 +148,7 @@ async def yield_batches_concurrently(
         client: Optional existing client to reuse.
         impersonate: Browser fingerprint to impersonate (default: "chrome").
     Yields:
-        Individual result items from the processed batches.
+        Lists of results from the processed batches.
     """
     chunks = [items[i: i + batch_size] for i in range(0, len(items), batch_size)]
     semaphore = asyncio.Semaphore(concurrency_limit)
@@ -162,8 +165,7 @@ async def yield_batches_concurrently(
         # Use tqdm to wrap the as_completed iterator
         for future in tqdm(asyncio.as_completed(tasks), total=len(tasks), desc=description):
             batch_results = await future
-            for res in batch_results:
-                yield res
+            yield batch_results
     finally:
         if should_close_client:
             await client.close()

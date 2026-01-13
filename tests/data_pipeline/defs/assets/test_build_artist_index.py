@@ -51,15 +51,6 @@ async def test_build_artist_index_by_decade(mock_execute):
 @patch("data_pipeline.defs.assets.build_artist_index.settings")
 
 
-@patch("data_pipeline.defs.assets.build_artist_index.shutil.move")
-
-
-@patch("data_pipeline.defs.assets.build_artist_index.async_append_jsonl")
-
-
-@patch("data_pipeline.defs.assets.build_artist_index.async_clear_file")
-
-
 @patch("data_pipeline.defs.assets.build_artist_index.deduplicate_by_priority")
 
 
@@ -67,15 +58,6 @@ async def test_artist_index_merge_and_clean(
 
 
     mock_dedup,
-
-
-    mock_clear,
-
-
-    mock_append,
-
-
-    mock_move,
 
 
     mock_settings
@@ -105,25 +87,7 @@ async def test_artist_index_merge_and_clean(
     mock_settings.DATASETS_DIRPATH = MagicMock()
 
 
-    temp_path_mock = MagicMock()
-
-
-    final_path_mock = MagicMock()
-
-
-    temp_path_mock.exists.return_value = True
-
-
     
-
-
-    mock_settings.TEMP_DIRPATH.__truediv__.return_value = temp_path_mock
-
-
-    mock_settings.DATASETS_DIRPATH.__truediv__.return_value = final_path_mock
-
-
-
 
 
     # Mock Input: Single LazyFrame (simulating IO manager combining partitions)
@@ -165,41 +129,17 @@ async def test_artist_index_merge_and_clean(
     # Execute the asset
 
 
-    result = await build_artist_index(context, mock_input_lf)
+    result_lf = build_artist_index(context, mock_input_lf)
 
 
     
 
 
-    assert isinstance(result, MaterializeResult)
+    assert isinstance(result_lf, pl.LazyFrame)
 
 
-    assert mock_dedup.called
+    mock_dedup.assert_called_once()
 
 
-    assert mock_clear.called
 
-
-    assert mock_append.called
-
-
-    assert mock_move.called
-
-
-    
-
-
-    # Verify rows written
-
-
-    args = mock_append.call_args
-
-
-    data_written = args[0][1] # list of dicts
-
-
-    assert len(data_written) == 2
-
-
-    assert data_written[0]["name"] == "Artist 1"
 

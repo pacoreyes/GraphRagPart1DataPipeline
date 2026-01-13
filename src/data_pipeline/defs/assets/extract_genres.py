@@ -7,18 +7,15 @@
 # email pacoreyes@protonmail.com
 # -----------------------------------------------------------
 
-import asyncio
-import shutil
 from typing import Any
 
 import msgspec
 import polars as pl
-from dagster import asset, AssetExecutionContext, MaterializeResult
+from dagster import asset, AssetExecutionContext
 
 from data_pipeline.models import Genre
 from data_pipeline.settings import settings
 from data_pipeline.utils.network_helpers import AsyncClient
-from data_pipeline.utils.io_helpers import async_append_jsonl, async_clear_file
 from data_pipeline.utils.data_transformation_helpers import normalize_and_clean_text
 from data_pipeline.utils.wikidata_helpers import (
     async_fetch_wikidata_entities_batch,
@@ -37,22 +34,15 @@ async def extract_genres(
     context: AssetExecutionContext, 
     wikidata: WikidataResource,
     artists: pl.LazyFrame
-) -> MaterializeResult:
+) -> pl.LazyFrame:
     """
     Extracts all unique music genre IDs from the artists dataset,
     fetches their English labels, aliases, and parents from Wikidata.
-    Returns a MaterializeResult with metadata, having moved the file to the final destination.
+    Returns a Polars LazyFrame.
     """
     context.log.info("Starting genre extraction from artists.")
 
-    # Temp file
-    temp_file = settings.TEMP_DIRPATH / "genres.jsonl"
-    final_file = settings.DATASETS_DIRPATH / "genres.jsonl"
-    
-    await async_clear_file(temp_file)
-
-    # 1. Lazy ID Extraction
-    # Extract unique genre QIDs from the 'genres' column in the artists dataset.
+    # 1. ID Extraction
     unique_genre_ids = (
         artists.select("genres")
         .explode("genres")
@@ -66,14 +56,7 @@ async def extract_genres(
     context.log.info(f"Found {len(unique_genre_ids)} unique genre IDs in artists.")
 
     if not unique_genre_ids:
-        context.log.warning("No genre IDs found. Returning empty result.")
-        return MaterializeResult(
-            metadata={
-                "row_count": 0,
-                "path": str(final_file),
-                "sparse_json": True
-            }
-        )
+        return pl.DataFrame(schema=msgspec.to_builtins(Genre)).lazy()
 
     # 2. Worker function
     async def process_batch(
@@ -119,43 +102,25 @@ async def extract_genres(
                     Genre(
                         id=genre_id, 
                         name=label, 
-                        aliases=aliases if aliases else None,
-                        parent_ids=parent_ids if parent_ids else None,
+                        aliases=aliases,
+                        parent_ids=parent_ids,
                     )
                 )
             )
 
         return batch_results
 
-    # 3. Stream processing
+    # 3. Processing
     batch_size = settings.WIKIDATA_ACTION_BATCH_SIZE
     total_genres = len(unique_genre_ids)
+    all_genres = []
     
     async with wikidata.get_client(context) as client:
-        # We can iterate the list directly since we materialized IDs
         for i in range(0, total_genres, batch_size):
             chunk = unique_genre_ids[i: i + batch_size]
             context.log.info(f"Processing genre batch {i}/{total_genres}")
             
             batch_data = await process_batch(chunk, client)
-            await async_append_jsonl(temp_file, batch_data)
+            all_genres.extend(batch_data)
         
-    context.log.info(f"Successfully fetched genres to {temp_file}. Moving to {final_file}...")
-    
-    # 4. Move to Final Destination
-    if await asyncio.to_thread(temp_file.exists):
-        await asyncio.to_thread(shutil.move, str(temp_file), str(final_file))
-        
-    row_count = 0
-    if await asyncio.to_thread(final_file.exists):
-        # We can use polars simply to count lines efficiently or just trust the process
-        # Using scan_ndjson to get count is safe and O(1) memory
-        row_count = pl.scan_ndjson(str(final_file)).select(pl.len()).collect().item()
-
-    return MaterializeResult(
-        metadata={
-            "row_count": row_count,
-            "path": str(final_file),
-            "sparse_json": True
-        }
-    )
+    return pl.DataFrame(all_genres).lazy()

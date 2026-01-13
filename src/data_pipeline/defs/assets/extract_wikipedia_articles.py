@@ -1,17 +1,14 @@
 import asyncio
 import re
-import shutil
-from typing import Any
+from typing import Any, Iterator
 
-import msgspec
 import polars as pl
-from dagster import asset, AssetExecutionContext, MaterializeResult
+from dagster import asset, AssetExecutionContext, Output
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from transformers import AutoTokenizer
 
 from data_pipeline.models import Article, ArticleMetadata
 from data_pipeline.settings import settings
-from data_pipeline.utils.io_helpers import async_append_jsonl, async_clear_file
 from data_pipeline.utils.network_helpers import yield_batches_concurrently, AsyncClient
 from data_pipeline.utils.data_transformation_helpers import normalize_and_clean_text
 from data_pipeline.utils.wikidata_helpers import (
@@ -34,6 +31,7 @@ WIKIPEDIA_EXCLUSION_HEADERS = [
 @asset(
     name="wikipedia_articles",
     description="Extract Wikipedia articles, clean, split, and enrich with metadata for RAG.",
+    io_manager_key="jsonl_io_manager"
 )
 async def extract_wikipedia_articles(
     context: AssetExecutionContext, 
@@ -42,16 +40,15 @@ async def extract_wikipedia_articles(
     artists: pl.LazyFrame,
     genres: pl.LazyFrame,
     artist_index: pl.LazyFrame
-) -> MaterializeResult:
+) -> list[list[Article]]:
     """
     Orchestrates the fetching, cleaning, chunking, and enrichment of Wikipedia articles
     for all validated artists in the pipeline.
-    Returns a MaterializeResult with metadata, having moved the file to the final destination.
+    Returns a list of batches (lists of Article objects).
     """
     context.log.info("Loading validated artists, genres, and artist index from inputs.")
 
-    # 1. Prepare Mappings (Materialize LazyFrames for lookup logic)
-    # We collect here because we need random access / iteration for the API logic
+    # 1. Prepare Mappings
     genres_df = genres.collect()
     artist_index_df = artist_index.collect()
     artists_df = artists.collect()
@@ -81,12 +78,6 @@ async def extract_wikipedia_articles(
     rows_to_process = artists_df.to_dicts()
     total_rows = len(rows_to_process)
     context.log.info(f"Found {total_rows} artists to process for Wikipedia articles.")
-
-    # Setup Temp File for Streaming Output
-    temp_file = settings.TEMP_DIRPATH / "wikipedia_articles.jsonl"
-    final_file = settings.DATASETS_DIRPATH / "wikipedia_articles.jsonl"
-    
-    await async_clear_file(temp_file)
 
     # 2. Setup Splitter
     tokenizer = AutoTokenizer.from_pretrained(
@@ -129,8 +120,6 @@ async def extract_wikipedia_articles(
             return []
 
         # 1. Section Parsing
-        # Split by headers (e.g., "== Career ==")
-        # Capturing group keeps delimiters in the list
         segments = re.split(r'(^={2,}[^=]+={2,}\s*$)', raw_text, flags=re.MULTILINE)
 
         current_section = "Introduction"
@@ -141,22 +130,13 @@ async def extract_wikipedia_articles(
             if not segment:
                 continue
 
-            # Check if header
             if segment.startswith("==") and segment.endswith("=="):
                 header_clean = segment.strip("=").strip()
-                
-                # Check for exclusion headers (References, etc.)
-                # If found, stop processing the rest of the document (standard Wikipedia cleaner behavior)
                 if any(ex.lower() == header_clean.lower() for ex in WIKIPEDIA_EXCLUSION_HEADERS):
                     break
-                
                 current_section = header_clean
             else:
-                # Content Block
-                # We use normalize_and_clean_text directly on the section content
                 cleaned_content = normalize_and_clean_text(segment)
-                
-                # Skip if content is empty or too short to be semantically useful
                 if not cleaned_content or len(cleaned_content) < settings.MIN_CONTENT_LENGTH:
                     continue
 
@@ -171,7 +151,6 @@ async def extract_wikipedia_articles(
         
         results = []
         for i, (section, chunk_text) in enumerate(all_chunks_with_context):
-            # Prepend Section Context
             enriched_text = f"search_document: {artist_name} (Section: {section}) | {chunk_text}"
             chunk_index = i + 1
             article_id = f"{qid}_chunk_{chunk_index}"
@@ -180,10 +159,10 @@ async def extract_wikipedia_articles(
                 title=title.replace("_", " "),
                 artist_name=artist_name,
                 country=artist_row.get("country") or "Unknown",
-                aliases=artist_row.get("aliases"),
-                tags=artist_row.get("tags"),
-                similar_artists=artist_row.get("similar_artists"),
-                genres=genre_names if genre_names else None,
+                aliases=artist_row.get("aliases") or None,
+                tags=artist_row.get("tags") or None,
+                similar_artists=artist_row.get("similar_artists") or None,
+                genres=genre_names or None,
                 inception_year=year,
                 wikipedia_url=wiki_url,
                 wikidata_uri=f"{settings.WIKIDATA_CONCEPT_BASE_URI_PREFIX}{qid}",
@@ -210,8 +189,6 @@ async def extract_wikipedia_articles(
             client=wikidata_client
         )
         
-        # Limit concurrent requests to Wikipedia within this batch to avoid 429s
-        # Total concurrency = (External Batches: 5) * (Internal Semaphore)
         sem = asyncio.Semaphore(settings.WIKIPEDIA_CONCURRENT_REQUESTS)
 
         async def bounded_process(row: dict[str, Any], url: str) -> list[Article]:
@@ -221,7 +198,7 @@ async def extract_wikipedia_articles(
         tasks = []
         for row in batch:
             qid = str(row.get("id") or "")
-            entity_data = entity_data = entities.get(qid)
+            entity_data = entities.get(qid)
             if not entity_data:
                 continue
             wiki_url = extract_wikidata_wikipedia_url(entity_data)
@@ -234,9 +211,9 @@ async def extract_wikipedia_articles(
         return [item for sublist in results_nested for item in sublist]
 
     # 4. Execution Loop
+    all_batches = []
     async with wikidata.get_client(context) as wikidata_client, wikipedia.get_client(context) as wikipedia_client:
         
-        # We need a wrapper to pass both clients to yield_batches_concurrently
         async def processor_with_two_clients(batch, _):
              return await process_batch_wrapper(batch, wikidata_client, wikipedia_client)
 
@@ -247,34 +224,10 @@ async def extract_wikipedia_articles(
             concurrency_limit=settings.WIKIDATA_CONCURRENT_REQUESTS,
             description="Processing Articles",
             timeout=settings.WIKIDATA_ACTION_REQUEST_TIMEOUT,
-            client=wikidata_client, # This is actually used as dummy or passed as first arg in some implementations, but yield_batches_concurrently signature usually takes one client.
+            client=wikidata_client,
         )
 
-        # 5. Stream results to file
-        context.log.info(f"Streaming Wikipedia articles to {temp_file}.")
-        buffer = []
-        chunk_count = 0
-        async for article in article_stream:
-            buffer.append(msgspec.to_builtins(article))
-            if len(buffer) >= settings.ARTICLES_BUFFER_SIZE:
-                await async_append_jsonl(temp_file, buffer)
-                chunk_count += len(buffer)
-                buffer = []
-        
-        if buffer:
-            await async_append_jsonl(temp_file, buffer)
-            chunk_count += len(buffer)
+        async for batch in article_stream:
+            all_batches.append(batch)
 
-    context.log.info(f"Wikipedia extraction complete. Fetched {chunk_count} chunks. Moving to {final_file}...")
-    
-    # 6. Move to Final Destination
-    if await asyncio.to_thread(temp_file.exists):
-        await asyncio.to_thread(shutil.move, str(temp_file), str(final_file))
-    
-    return MaterializeResult(
-        metadata={
-            "chunk_count": chunk_count,
-            "artist_count": total_rows,
-            "path": str(final_file)
-        }
-    )
+    return all_batches

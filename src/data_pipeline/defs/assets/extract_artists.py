@@ -7,13 +7,11 @@
 # email pacoreyes@protonmail.com
 # -----------------------------------------------------------
 
-import asyncio
+from typing import Any, Optional, Iterator
 import re
-import shutil
-from typing import Any, Optional
 
 import polars as pl
-from dagster import asset, AssetExecutionContext, MaterializeResult
+from dagster import asset, AssetExecutionContext, Output
 
 from data_pipeline.models import Artist
 from data_pipeline.settings import settings
@@ -21,7 +19,6 @@ from data_pipeline.utils.network_helpers import (
     run_tasks_concurrently,
     AsyncClient,
 )
-from data_pipeline.utils.io_helpers import async_append_jsonl, async_clear_file
 from data_pipeline.utils.wikidata_helpers import (
     async_fetch_wikidata_entities_batch,
     async_resolve_qids_to_labels,
@@ -229,11 +226,11 @@ async def _enrich_artist_batch(
             id=qid,
             name=name,
             mbid=mbid,
-            aliases=aliases if aliases else None,
+            aliases=aliases,
             country=country_label,
-            genres=meta.get("genre_qids") if meta.get("genre_qids") else None,
-            tags=tags if tags else None,
-            similar_artists=similar_artists if similar_artists else None,
+            genres=meta.get("genre_qids"),
+            tags=tags,
+            similar_artists=similar_artists,
         )
 
     results = await run_tasks_concurrently(
@@ -259,32 +256,21 @@ async def extract_artists(
     wikidata: WikidataResource,
     lastfm: LastFmResource,
     artist_index: pl.LazyFrame
-) -> MaterializeResult:
+) -> list[Artist]:
     """
     Enriches all artists from the merged index.
-    Returns a MaterializeResult with metadata, having moved the file to the final destination.
+    Returns a list of enriched Artist objects.
     """
     context.log.info("Starting artist enrichment for full index.")
 
-    # Temp file for streaming results
-    temp_file = settings.TEMP_DIRPATH / "artists.jsonl"
-    final_file = settings.DATASETS_DIRPATH / "artists.jsonl"
-
-    await async_clear_file(temp_file)
-
-    # 1. Get Total Count for Loop
-    # We collect only the count, which is O(1) memory
+    all_enriched_artists = []
+    
+    # 1. Get Total Count
     total_rows = artist_index.select(pl.len()).collect().item()
     context.log.info(f"Total artists to process: {total_rows}")
 
     if total_rows == 0:
-        return MaterializeResult(
-            metadata={
-                "row_count": 0,
-                "path": str(final_file),
-                "sparse_json": True
-            }
-        )
+        return []
 
     batch_size = settings.WIKIDATA_ACTION_BATCH_SIZE
 
@@ -302,12 +288,7 @@ async def extract_artists(
                 item for item in batch_items
                 if _is_latin_name(item.get("name", ""))
             ]
-            dropped_count = len(batch_items) - len(filtered_items)
-            if dropped_count > 0:
-                context.log.info(
-                    f"Dropped {dropped_count} non-Latin artists from batch {offset}"
-                )
-
+            
             if not filtered_items:
                 continue
 
@@ -316,30 +297,6 @@ async def extract_artists(
                 filtered_items, context, lastfm, client
             )
 
-            # Filter metadata drops
-            metadata_dropped_count = len(filtered_items) - len(enriched_batch)
-            if metadata_dropped_count > 0:
-                context.log.info(
-                    f"Dropped {metadata_dropped_count} artists with missing metadata from batch {offset}"
-                )
+            all_enriched_artists.extend(enriched_batch)
 
-            # Write Batch to Disk (Stream)
-            await async_append_jsonl(temp_file, enriched_batch)
-
-    context.log.info(f"Enriched artists saved to {temp_file}. Moving to {final_file}...")
-
-    # 4. Move to Final Destination
-    if await asyncio.to_thread(temp_file.exists):
-        await asyncio.to_thread(shutil.move, str(temp_file), str(final_file))
-        
-    row_count = 0
-    if await asyncio.to_thread(final_file.exists):
-        row_count = pl.scan_ndjson(str(final_file)).select(pl.len()).collect().item()
-
-    return MaterializeResult(
-        metadata={
-            "row_count": row_count,
-            "path": str(final_file),
-            "sparse_json": True
-        }
-    )
+    return all_enriched_artists
