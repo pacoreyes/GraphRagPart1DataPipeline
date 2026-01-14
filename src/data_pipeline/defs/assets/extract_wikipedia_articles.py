@@ -1,9 +1,8 @@
 import asyncio
-import re
-from typing import Any, Iterator
+from typing import Any
 
 import polars as pl
-from dagster import asset, AssetExecutionContext, Output
+from dagster import asset, AssetExecutionContext
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from transformers import AutoTokenizer
 
@@ -17,6 +16,7 @@ from data_pipeline.utils.wikidata_helpers import (
 )
 from data_pipeline.utils.wikipedia_helpers import (
     async_fetch_wikipedia_article,
+    parse_wikipedia_sections,
 )
 from data_pipeline.defs.resources import WikidataResource, WikipediaResource
 
@@ -119,30 +119,20 @@ async def extract_wikipedia_articles(
         if not raw_text:
             return []
 
-        # 1. Section Parsing
-        segments = re.split(r'(^={2,}[^=]+={2,}\s*$)', raw_text, flags=re.MULTILINE)
-
-        current_section = "Introduction"
+        # 1. Parse sections and chunk text
         all_chunks_with_context = []
-
-        for segment in segments:
-            segment = segment.strip()
-            if not segment:
+        for section in parse_wikipedia_sections(
+            raw_text,
+            exclusion_headers=WIKIPEDIA_EXCLUSION_HEADERS,
+            min_content_length=settings.MIN_CONTENT_LENGTH,
+        ):
+            cleaned_content = normalize_and_clean_text(section.content)
+            if not cleaned_content:
                 continue
 
-            if segment.startswith("==") and segment.endswith("=="):
-                header_clean = segment.strip("=").strip()
-                if any(ex.lower() == header_clean.lower() for ex in WIKIPEDIA_EXCLUSION_HEADERS):
-                    break
-                current_section = header_clean
-            else:
-                cleaned_content = normalize_and_clean_text(segment)
-                if not cleaned_content or len(cleaned_content) < settings.MIN_CONTENT_LENGTH:
-                    continue
-
-                section_chunks = text_splitter.split_text(cleaned_content)
-                for chunk in section_chunks:
-                    all_chunks_with_context.append((current_section, chunk))
+            section_chunks = text_splitter.split_text(cleaned_content)
+            for chunk in section_chunks:
+                all_chunks_with_context.append((section.name, chunk))
 
         total_chunks = len(all_chunks_with_context)
         genre_ids = artist_row.get("genres") or []
@@ -215,7 +205,7 @@ async def extract_wikipedia_articles(
     async with wikidata.get_client(context) as wikidata_client, wikipedia.get_client(context) as wikipedia_client:
         
         async def processor_with_two_clients(batch, _):
-             return await process_batch_wrapper(batch, wikidata_client, wikipedia_client)
+            return await process_batch_wrapper(batch, wikidata_client, wikipedia_client)
 
         article_stream = yield_batches_concurrently(
             items=rows_to_process,

@@ -5,3 +5,4 @@ from . import extract_releases
 from . import extract_tracks
 from . import extract_wikipedia_articles
 from . import ingest_graph_db
+from . import ingest_vector_db

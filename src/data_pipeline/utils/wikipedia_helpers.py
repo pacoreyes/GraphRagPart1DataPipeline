@@ -7,9 +7,11 @@
 # email pacoreyes@protonmail.com
 # ----------------------------------------------------------- 
 
+import re
 import urllib.parse
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 from dagster import AssetExecutionContext
 
@@ -83,3 +85,54 @@ async def async_fetch_wikipedia_article(
         return None
 
     return None
+
+
+@dataclass
+class WikipediaSection:
+    """Represents a parsed section from a Wikipedia article."""
+    name: str
+    content: str
+
+
+def parse_wikipedia_sections(
+    raw_text: str,
+    exclusion_headers: list[str],
+    min_content_length: int = 50,
+) -> Iterator[WikipediaSection]:
+    """
+    Parses raw Wikipedia article text into sections.
+
+    Splits the article by MediaWiki section headers (== Header ==) and yields
+    each section with its cleaned content. Stops parsing when an excluded
+    section is encountered.
+
+    Args:
+        raw_text: Raw plain text from Wikipedia API (explaintext format).
+        exclusion_headers: List of section headers to stop parsing at
+            (e.g., ["References", "External links", "See also"]).
+        min_content_length: Minimum character length for content to be included.
+
+    Yields:
+        WikipediaSection objects containing section name and content.
+    """
+    # Split by section headers (== Header ==, === Subheader ===, etc.)
+    segments = re.split(r'(^={2,}[^=]+={2,}\s*$)', raw_text, flags=re.MULTILINE)
+
+    current_section = "Introduction"
+
+    for segment in segments:
+        segment = segment.strip()
+        if not segment:
+            continue
+
+        # Check if segment is a header
+        if segment.startswith("==") and segment.endswith("=="):
+            header_clean = segment.strip("=").strip()
+            # Stop if we hit an excluded section
+            if any(ex.lower() == header_clean.lower() for ex in exclusion_headers):
+                return
+            current_section = header_clean
+        else:
+            # Content segment
+            if len(segment) >= min_content_length:
+                yield WikipediaSection(name=current_section, content=segment)

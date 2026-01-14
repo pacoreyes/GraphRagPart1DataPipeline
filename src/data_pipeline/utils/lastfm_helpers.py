@@ -7,6 +7,7 @@
 # email pacoreyes@protonmail.com
 # -----------------------------------------------------------
 
+from dataclasses import dataclass
 from typing import Any, Optional
 from pathlib import Path
 
@@ -83,3 +84,49 @@ async def async_fetch_lastfm_data_with_cache(
     except Exception as e:
         context.log.warning(f"Last.fm request failed: {e}")
         return None
+
+
+@dataclass
+class LastFmArtistInfo:
+    """Parsed artist information from Last.fm API response."""
+    tags: list[str]
+    similar_artists: list[str]
+
+
+def parse_lastfm_artist_response(response: Optional[dict[str, Any]]) -> LastFmArtistInfo:
+    """
+    Parses the Last.fm artist.getInfo API response.
+
+    Extracts tags and similar artists from the nested response structure.
+    Handles edge cases where the API returns a single dict instead of a list.
+
+    Args:
+        response: Raw JSON response from Last.fm artist.getInfo endpoint.
+
+    Returns:
+        LastFmArtistInfo with extracted tags and similar artists.
+        Returns empty lists if response is invalid or missing data.
+    """
+    tags: list[str] = []
+    similar_artists: list[str] = []
+
+    if not response or "artist" not in response:
+        return LastFmArtistInfo(tags=tags, similar_artists=similar_artists)
+
+    artist_data = response.get("artist") or {}
+
+    # Parse tags - API may return dict (single) or list (multiple)
+    raw_tags = (artist_data.get("tags") or {}).get("tag") or []
+    if isinstance(raw_tags, dict):
+        raw_tags = [raw_tags]
+    tags = [t["name"] for t in raw_tags if isinstance(t, dict) and "name" in t]
+
+    # Parse similar artists - API may return dict (single) or list (multiple)
+    raw_similar = (artist_data.get("similar") or {}).get("artist") or []
+    if isinstance(raw_similar, dict):
+        raw_similar = [raw_similar]
+    similar_artists = [
+        s["name"] for s in raw_similar if isinstance(s, dict) and "name" in s
+    ]
+
+    return LastFmArtistInfo(tags=tags, similar_artists=similar_artists)

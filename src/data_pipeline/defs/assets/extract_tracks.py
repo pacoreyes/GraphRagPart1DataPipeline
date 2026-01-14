@@ -7,17 +7,15 @@
 # email pacoreyes@protonmail.com
 # -----------------------------------------------------------
 
-from typing import Iterator, Any
+from pathlib import Path
+from dagster import asset, AssetExecutionContext
 
-import msgspec
 import polars as pl
-from dagster import asset, AssetExecutionContext, Output
-
 from data_pipeline.models import Track
-from data_pipeline.settings import settings
 from data_pipeline.utils.musicbrainz_helpers import (
     fetch_releases_for_group_async,
     fetch_tracks_for_release_async,
+    select_best_release,
 )
 from data_pipeline.utils.data_transformation_helpers import normalize_and_clean_text
 from data_pipeline.defs.resources import MusicBrainzResource
@@ -57,34 +55,28 @@ async def extract_tracks(
 
     # 2. Processing
     async with musicbrainz.get_client(context) as client:
-        for i, row in enumerate(rows):
+        for i, row in enumerate(rows, 1):
             release_group_mbid = row["id"]
             release_title = row["title"]
             
-            if i % 10 == 0:
-                context.log.info(f"Processing tracks for release {i}/{total_releases}: {release_title}")
+            context.log.info(f"[{i}/{total_releases}] Processing tracks for: {release_title}")
 
             # A. Find representative Release
             mb_releases = await fetch_releases_for_group_async(
                 context=context,
                 release_group_mbid=release_group_mbid,
                 client=client,
+                cache_dirpath=Path(musicbrainz.cache_dir),
                 api_url=musicbrainz.api_url,
-                headers=settings.DEFAULT_REQUEST_HEADERS,
+                headers={},
                 rate_limit_delay=musicbrainz.rate_limit_delay
             )
             
-            if not mb_releases:
+            # Select best release (Official status preferred, oldest date)
+            best_release = select_best_release(mb_releases)
+            if not best_release:
                 continue
 
-            # Selection Strategy: Prefer 'Official' status, then oldest date
-            def sort_key(r):
-                status_rank = 0 if r.get("status") == "Official" else 1
-                date = r.get("date", "9999-99-99") or "9999-99-99"
-                return (status_rank, date)
-
-            mb_releases.sort(key=sort_key)
-            best_release = mb_releases[0]
             release_id = best_release["id"]
 
             # B. Fetch Tracks for the chosen Release
@@ -92,9 +84,9 @@ async def extract_tracks(
                 context=context,
                 release_mbid=release_id,
                 client=client,
-                cache_dirpath=settings.MUSICBRAINZ_CACHE_DIRPATH,
+                cache_dirpath=Path(musicbrainz.cache_dir),
                 api_url=musicbrainz.api_url,
-                headers=settings.DEFAULT_REQUEST_HEADERS,
+                headers={},
                 rate_limit_delay=musicbrainz.rate_limit_delay
             )
             

@@ -106,7 +106,7 @@ async def test_fetch_artist_release_groups_async_cached(mock_make_request, mock_
 
 
 @pytest.mark.asyncio
-async def test_fetch_releases_for_group_async(mock_make_request):
+async def test_fetch_releases_for_group_async(mock_make_request, mock_cache_path):
     """Test fetching releases for a release group."""
     rg_data = {
         "releases": [{"id": "rel-1"}, {"id": "rel-2"}]
@@ -118,10 +118,12 @@ async def test_fetch_releases_for_group_async(mock_make_request):
     context = build_asset_context()
     client = AsyncMock()
     
+    # Run 1: Fetch from API
     results = await fetch_releases_for_group_async(
         context=context,
         release_group_mbid="rg-123",
         client=client,
+        cache_dirpath=mock_cache_path,
         api_url="http://mock-api",
         headers={"User-Agent": "test"}
     )
@@ -129,6 +131,23 @@ async def test_fetch_releases_for_group_async(mock_make_request):
     assert len(results) == 2
     assert results[0]["id"] == "rel-1"
     mock_make_request.assert_called_once()
+    
+    # Verify Cache File
+    cache_file = mock_cache_path / "rg-123_releases.json"
+    assert cache_file.exists()
+    
+    # Run 2: Fetch from Cache
+    mock_make_request.reset_mock()
+    results_cached = await fetch_releases_for_group_async(
+        context=context,
+        release_group_mbid="rg-123",
+        client=client,
+        cache_dirpath=mock_cache_path,
+        api_url="http://mock-api",
+        headers={"User-Agent": "test"}
+    )
+    assert results_cached == results
+    mock_make_request.assert_not_called()
 
 
 @pytest.mark.asyncio

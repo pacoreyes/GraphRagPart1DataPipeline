@@ -7,15 +7,16 @@
 # email pacoreyes@protonmail.com
 # -----------------------------------------------------------
 
-from typing import Iterator, Any
-
-import msgspec
 import polars as pl
-from dagster import asset, AssetExecutionContext, Output
+from dagster import asset, AssetExecutionContext
 
 from data_pipeline.models import Release
 from data_pipeline.settings import settings
-from data_pipeline.utils.musicbrainz_helpers import fetch_artist_release_groups_async
+from data_pipeline.utils.musicbrainz_helpers import (
+    fetch_artist_release_groups_async,
+    filter_release_groups,
+    parse_release_year,
+)
 from data_pipeline.utils.data_transformation_helpers import normalize_and_clean_text
 from data_pipeline.defs.resources import MusicBrainzResource
 
@@ -70,26 +71,14 @@ async def extract_releases(
                 rate_limit_delay=musicbrainz.rate_limit_delay
             )
             
-            # Domain Filter: Only 'Album' or 'Single' with no secondary types
-            rgs = [
-                rg for rg in all_rgs
-                if rg.get("primary-type") in ["Album", "Single"]
-                and not rg.get("secondary-types")
-            ]
-            
-            for rg in rgs:
+            # Filter to Albums/Singles without secondary types
+            filtered_rgs = filter_release_groups(all_rgs)
+
+            for rg in filtered_rgs:
                 rg_id = rg["id"]
                 title = rg["title"]
-                first_release_date = rg.get("first-release-date", "")
-                
-                # Parse Year
-                year = None
-                if first_release_date:
-                    try:
-                        year = int(first_release_date.split("-")[0])
-                    except (ValueError, IndexError):
-                        pass
-                
+                year = parse_release_year(rg.get("first-release-date"))
+
                 all_releases.append(
                     Release(
                         id=rg_id,

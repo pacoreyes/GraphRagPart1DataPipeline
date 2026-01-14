@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     LAST_FM_CACHE_DIRPATH: Path = Field(default_factory=lambda: Path("."), init=False)
     MUSICBRAINZ_CACHE_DIRPATH: Path = Field(default_factory=lambda: Path("."), init=False)
     DATASETS_DIRPATH: Path = Field(default_factory=lambda: Path("."), init=False)
-    TEMP_DIRPATH: Path = Field(default_factory=lambda: Path("."), init=False)
+    # TEMP_DIRPATH: Path = Field(default_factory=lambda: Path("."), init=False)
 
     # ==============================================================================
     #  VECTOR DATABASE SETTINGS
@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     # ChromaDB
     DEFAULT_EMBEDDINGS_MODEL_NAME: str = "nomic-ai/nomic-embed-text-v1.5"
     DEFAULT_COLLECTION_NAME: str = "music_rag_collection"
+    VECTOR_DB_BATCH_SIZE: int = 128
+    VECTOR_DB_DIRPATH: Path = Field(default_factory=lambda: Path("."), init=False)
 
     # ==============================================================================
     #  API & SERVICE CONFIGURATION
@@ -66,17 +68,15 @@ class Settings(BaseSettings):
     MUSICBRAINZ_API_URL: str = "https://musicbrainz.org/ws/2"
 
     # Bot's public identity (Polite for APIs)
-    APP_NAME: str = "Node AI"
+    APP_NAME: str = "Nodes AI"
     APP_VERSION: str = "0.2.1"
     CONTACT_EMAIL: str = "info@nodesai.de"
     USER_AGENT: str = Field(default="", init=False)
     DEFAULT_REQUEST_HEADERS: dict[str, str] = Field(default_factory=dict, init=False)
 
     # ==============================================================================
-    #  API & SERVICE CONFIGURATION
-
-
     # WIKIDATA API
+    # ==============================================================================
     WIKIDATA_CONCURRENT_REQUESTS: int = 5
     WIKIDATA_FALLBACK_LANGUAGES: list[str] = [
         "en", "de", "es", "fr", "it", "ja", "pt", "ru", "zh",
@@ -139,7 +139,8 @@ class Settings(BaseSettings):
         self.LAST_FM_CACHE_DIRPATH = self.DATA_DIR / ".cache" / "last_fm"
         self.MUSICBRAINZ_CACHE_DIRPATH = self.DATA_DIR / ".cache" / "musicbrainz"
         self.DATASETS_DIRPATH = self.DATA_DIR / "datasets"
-        self.TEMP_DIRPATH = self.DATA_DIR / ".temp"
+        # self.TEMP_DIRPATH = self.DATA_DIR / ".temp"
+        self.VECTOR_DB_DIRPATH = self.DATA_DIR / "vector_db"
 
         # Create directories if they don't exist
         dirs_to_create = [
@@ -148,7 +149,8 @@ class Settings(BaseSettings):
             self.LAST_FM_CACHE_DIRPATH,
             self.MUSICBRAINZ_CACHE_DIRPATH,
             self.DATASETS_DIRPATH,
-            self.TEMP_DIRPATH,
+            # self.TEMP_DIRPATH,
+            self.VECTOR_DB_DIRPATH,
         ]
         for directory in dirs_to_create:
             directory.mkdir(parents=True, exist_ok=True)

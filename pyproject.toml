@@ -19,8 +19,9 @@ dependencies = [
     "nomic",  # Embedding model (Nomic AI)
     "neo4j",  # Neo4j graph database driver
     "dagster_gcp",  # Dagster integration with GCP  # MusicBrainz API client
-    "musicbrainzngs",
-    "curl-cffi>=0.14.0",
+    # "musicbrainzngs",  #
+    "curl-cffi>=0.14.0",  #
+    "sentence_transformers"  #
 ]
 
 [dependency-groups]

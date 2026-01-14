@@ -7,11 +7,11 @@
 # email pacoreyes@protonmail.com
 # -----------------------------------------------------------
 
-from typing import Any, Optional, Iterator
 import re
+from typing import Any, Optional
 
 import polars as pl
-from dagster import asset, AssetExecutionContext, Output
+from dagster import asset, AssetExecutionContext
 
 from data_pipeline.models import Artist
 from data_pipeline.settings import settings
@@ -27,7 +27,10 @@ from data_pipeline.utils.wikidata_helpers import (
     extract_wikidata_claim_ids,
     extract_wikidata_wikipedia_url,
 )
-from data_pipeline.utils.lastfm_helpers import async_fetch_lastfm_data_with_cache
+from data_pipeline.utils.lastfm_helpers import (
+    async_fetch_lastfm_data_with_cache,
+    parse_lastfm_artist_response,
+)
 from data_pipeline.utils.data_transformation_helpers import normalize_and_clean_text
 from data_pipeline.defs.resources import WikidataResource, LastFmResource
 
@@ -203,24 +206,8 @@ async def _enrich_artist_batch(
             client=client
         )
 
-        tags = []
-        similar_artists = []
-
-        if lastfm_data and "artist" in lastfm_data:
-            # Domain-specific parsing of Last.fm response
-            artist_data = lastfm_data.get("artist") or {}
-
-            # Tags
-            raw_tags = (artist_data.get("tags") or {}).get("tag") or []
-            if isinstance(raw_tags, dict):
-                raw_tags = [raw_tags]
-            tags = [t["name"] for t in raw_tags if isinstance(t, dict) and "name" in t]
-
-            # Similar
-            raw_sim = (artist_data.get("similar") or {}).get("artist") or []
-            if isinstance(raw_sim, dict):
-                raw_sim = [raw_sim]
-            similar_artists = [s["name"] for s in raw_sim if isinstance(s, dict) and "name" in s]
+        # Parse Last.fm response using helper
+        lastfm_info = parse_lastfm_artist_response(lastfm_data)
 
         return Artist(
             id=qid,
@@ -229,8 +216,8 @@ async def _enrich_artist_batch(
             aliases=aliases,
             country=country_label,
             genres=meta.get("genre_qids"),
-            tags=tags,
-            similar_artists=similar_artists,
+            tags=lastfm_info.tags,
+            similar_artists=lastfm_info.similar_artists,
         )
 
     results = await run_tasks_concurrently(

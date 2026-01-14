@@ -10,6 +10,8 @@
 from contextlib import contextmanager, asynccontextmanager
 from typing import Any, AsyncGenerator, Generator
 
+import chromadb
+from chromadb.api.models.Collection import Collection
 from curl_cffi.requests import AsyncSession as AsyncClient
 from dagster import (
     ConfigurableResource,
@@ -49,6 +51,7 @@ class MusicBrainzResource(ConfigurableResource):
     api_url: str
     request_timeout: int
     rate_limit_delay: float
+    cache_dir: str
 
     @asynccontextmanager
     async def get_client(self, context) -> AsyncGenerator[AsyncClient, None]:
@@ -72,6 +75,49 @@ class NomicResource(ConfigurableResource):
     api_key: str
 
 
+class ChromaDBResource(ConfigurableResource):
+    """
+    Resource for interacting with ChromaDB vector database.
+
+    Provides configuration for persistent ChromaDB storage and
+    a factory method to obtain collections.
+    """
+    db_path: str
+    collection_name: str
+    model_name: str
+    batch_size: int  # ChromaDB upsert batch size
+    embedding_batch_size: int = 64  # GPU embedding batch size (optimal: 32-128 for MPS)
+
+    @contextmanager
+    def get_collection(
+        self,
+        context,
+        embedding_function: Any = None
+    ) -> Generator[Collection, None, None]:
+        """
+        Factory method to yield a ChromaDB collection.
+
+        Args:
+            context: Dagster execution context for logging.
+            embedding_function: Custom embedding function for the collection.
+
+        Yields:
+            ChromaDB Collection instance.
+        """
+        context.log.debug(f"Initializing ChromaDB client at {self.db_path}")
+        client = chromadb.PersistentClient(path=self.db_path)
+
+        collection = client.get_or_create_collection(
+            name=self.collection_name,
+            embedding_function=embedding_function,
+        )
+        context.log.info(
+            f"ChromaDB collection '{self.collection_name}' ready "
+            f"(existing count: {collection.count()})"
+        )
+        yield collection
+
+
 class Neo4jResource(ConfigurableResource):
     """
     Resource for interacting with the Neo4j graph database.
@@ -85,6 +131,7 @@ class Neo4jResource(ConfigurableResource):
         context.log.debug(f"Initializing Neo4j driver (Run ID: {context.run_id})")
         driver = GraphDatabase.driver(self.uri, auth=(self.username, self.password))
         try:
+            driver.verify_connectivity()
             yield driver
         finally:
             driver.close()
@@ -145,9 +192,16 @@ resource_defs: dict[str, Any] = {
         api_url=settings.MUSICBRAINZ_API_URL,
         request_timeout=settings.MUSICBRAINZ_REQUEST_TIMEOUT,
         rate_limit_delay=settings.MUSICBRAINZ_RATE_LIMIT_DELAY,
+        cache_dir=str(settings.MUSICBRAINZ_CACHE_DIRPATH),
     ),
     "nomic": NomicResource(
         api_key=EnvVar("NOMIC_API_KEY")
+    ),
+    "chromadb": ChromaDBResource(
+        db_path=str(settings.VECTOR_DB_DIRPATH),
+        collection_name=settings.DEFAULT_COLLECTION_NAME,
+        model_name=settings.DEFAULT_EMBEDDINGS_MODEL_NAME,
+        batch_size=settings.VECTOR_DB_BATCH_SIZE,
     ),
     "neo4j": Neo4jResource(
         uri=EnvVar("NEO4J_URI"),

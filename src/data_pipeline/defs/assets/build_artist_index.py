@@ -60,12 +60,12 @@ WHERE {{
 
       # 3. Date Filter
       ?artist wdt:P571|wdt:P2031 ?start_date .
-      FILTER (YEAR(?start_date) >= {{start_year}} && YEAR(?start_date) <= {{end_year}})
+      FILTER (YEAR(?start_date) >= {start_year} && YEAR(?start_date) <= {end_year})
     }}
     # Pagination applies only to the ID retrieval (Fast)
     ORDER BY ?start_date ?artist
-    LIMIT {{limit}}
-    OFFSET {{offset}}
+    LIMIT {limit}
+    OFFSET {offset}
   }}
 
   # --- OUTER QUERY: Fetch Labels for the 100 results ---
@@ -181,4 +181,3 @@ def build_artist_index(
     )
 
     return clean_lf
-
