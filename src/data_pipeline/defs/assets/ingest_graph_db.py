@@ -270,3 +270,18 @@ def _validate_graph_counts(driver: Driver, context: AssetExecutionContext, expec
                 context.log.info(f"Validation passed for {label}: {actual} nodes found.")
         except Exception as e:
             context.log.error(f"Validation failed for {label}: {e}")
+
+
+"""
+MATCH (target:Artist {name: 'Depeche Mode'})
+
+// 1. Get Depeche Mode's own genres (This is the new part)
+MATCH (target)-[r3:HAS_GENRE]->(targetGenre:Genre)
+
+// 2. Get Similar Artists and their connections
+MATCH (target)-[r1:SIMILAR_TO]-(similar:Artist)
+MATCH (similar)-[r2:HAS_GENRE]->(simGenre:Genre)
+
+// 3. Return everything, including the new relationships (r3)
+RETURN target, targetGenre, similar, simGenre, r1, r2, r3
+"""

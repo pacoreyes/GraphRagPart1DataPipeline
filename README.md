@@ -76,12 +76,13 @@ This project implements a **strict separation of concerns** following Dagster's 
 │  │  │ .py              │  │ .py            │  │ _articles.py        │       │
 │  │  └──────────────────┘  └────────────────┘  └─────────────────────┘       │
 │  │                                                      │                   │
-│  │                                    ┌─────────────────┘                   │
-│  │                                    ▼                                     │
-│  │                          ┌───────────────────┐                           │
-│  │                          │  ingest_graph_db  │                           │
-│  │                          │  .py (Neo4j)      │                           │
-│  │                          └───────────────────┘                           │
+│  │  ┌───────────────────────────────────────────────────┼───────────────┐   │
+│  │  │                                                   ▼               │   │
+│  │  │  ┌───────────────────┐              ┌───────────────────┐        │   │
+│  │  │  │  ingest_graph_db  │              │  ingest_vector_db │        │   │
+│  │  │  │  .py (Neo4j)      │              │  .py (ChromaDB)   │        │   │
+│  │  │  └───────────────────┘              └───────────────────┘        │   │
+│  │  └──────────────────────────────────────────────────────────────────┘   │
 │  └──────────────────────────────────────────────────────────────────────────│
 └──────────────────────────────────────────────────────────────────────────────┘
                                     │
@@ -103,10 +104,10 @@ This project implements a **strict separation of concerns** following Dagster's 
 │  │  │ wikidata_       │  │ musicbrainz_    │  │ lastfm_         │     │    │
 │  │  │ helpers.py      │  │ helpers.py      │  │ helpers.py      │     │    │
 │  │  └─────────────────┘  └─────────────────┘  └─────────────────┘     │    │
-│  │  ┌─────────────────┐  ┌─────────────────┐                          │    │
-│  │  │ wikipedia_      │  │ neo4j_          │                          │    │
-│  │  │ helpers.py      │  │ helpers.py      │                          │    │
-│  │  └─────────────────┘  └─────────────────┘                          │    │
+│  │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐     │    │
+│  │  │ wikipedia_      │  │ neo4j_          │  │ chroma_         │     │    │
+│  │  │ helpers.py      │  │ helpers.py      │  │ helpers.py      │     │    │
+│  │  └─────────────────┘  └─────────────────┘  └─────────────────┘     │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
 │  │                     DATA TRANSFORMATION                              │    │
@@ -139,6 +140,7 @@ This folder contains the **Data Definition Graph**.
 - Assets return `pl.LazyFrame`, `list[Model]`, or `MaterializeResult` — never write files directly
 - Domain-specific constants (e.g., `WIKIDATA_PROP_GENRE = "P136"`) belong in assets, not utils
 - Validation logic and business rules are implemented within assets
+- Assets delegate parsing/filtering to helper modules for reusability
 
 ### 2. The `defs/` Root Files: "The How" (Infrastructure)
 
@@ -146,7 +148,7 @@ These files define the **Execution Environment**.
 
 | File | Role | Change Frequency |
 |------|------|-----------------|
-| `resources.py` | Connection factories (Neo4j, HTTP clients). Handles secrets, timeouts, connection pooling | Low |
+| `resources.py` | Connection factories (Neo4j, HTTP clients, ChromaDB). Handles secrets, timeouts, connection pooling | Low |
 | `io_managers.py` | Bridge between Python memory and File System/Cloud Storage. Handles serialization (JSONL vs Parquet) and path organization | Low |
 | `partitions.py` | Slicing strategy. Defines the "shape" of pipeline execution (by decade) | Low |
 | `checks.py` | Quality contracts. Defines rules the data must obey after materialization | Medium |
@@ -160,38 +162,40 @@ These files define the **Execution Environment**.
 
 Contains **domain-agnostic, reusable helpers** that can be used across different projects.
 
-| Module | Responsibility |
-|--------|---------------|
-| `network_helpers.py` | HTTP requests with exponential backoff, concurrency control, async generators |
-| `io_helpers.py` | JSON/text file I/O, cache key generation, async file operations |
-| `data_transformation_helpers.py` | Text normalization, Unicode fixing (ftfy), Polars expressions |
-| `wikidata_helpers.py` | Wikidata SPARQL & Action API adapter with caching |
-| `wikipedia_helpers.py` | Wikipedia API adapter with text caching |
-| `musicbrainz_helpers.py` | MusicBrainz API adapter with pagination |
-| `lastfm_helpers.py` | Last.fm API adapter with response caching |
-| `neo4j_helpers.py` | Generic Cypher execution utilities |
+| Module | Responsibility | Key Functions |
+|--------|---------------|---------------|
+| `network_helpers.py` | HTTP requests with exponential backoff, concurrency control, async generators | `make_async_request_with_retries()`, `run_tasks_concurrently()`, `yield_batches_concurrently()` |
+| `io_helpers.py` | JSON/text file I/O, cache key generation, async file operations | `async_read_json_file()`, `async_write_json_file()`, `generate_cache_key()` |
+| `data_transformation_helpers.py` | Text normalization, Unicode fixing (ftfy), Polars expressions | `normalize_and_clean_text()`, `deduplicate_by_priority()` |
+| `wikidata_helpers.py` | Wikidata SPARQL & Action API adapter with caching | `run_extraction_pipeline()`, `async_fetch_wikidata_entities_batch()`, `extract_wikidata_*()` |
+| `wikipedia_helpers.py` | Wikipedia API adapter with section parsing | `async_fetch_wikipedia_article()`, `parse_wikipedia_sections()` |
+| `musicbrainz_helpers.py` | MusicBrainz API adapter with pagination and filtering | `fetch_artist_release_groups_async()`, `filter_release_groups()`, `select_best_release()`, `parse_release_year()` |
+| `lastfm_helpers.py` | Last.fm API adapter with response parsing | `async_fetch_lastfm_data_with_cache()`, `parse_lastfm_artist_response()` |
+| `neo4j_helpers.py` | Generic Cypher execution with retry logic | `execute_cypher()`, `clear_database()`, `execute_cypher_with_progress()` |
+| `chroma_helpers.py` | ChromaDB embedding utilities | `NomicEmbeddingFunction`, `get_device()`, `generate_doc_id()` |
 
-**Design Rules for Utils:**
-- No global config: Utils never import `settings` directly — configuration is passed as arguments
-- Dependency injection: API keys, paths, URLs, timeouts passed as function parameters
-- No domain logic: Schema definitions (like Neo4j indexes) belong in assets, not utils
+**Design Rules for Utils (CLAUDE.md Compliance):**
+- **No global config**: Utils never import `settings` directly — configuration is passed as arguments
+- **Dependency injection**: API keys, paths, URLs, timeouts passed as function parameters
+- **No domain logic**: Schema definitions (like Neo4j indexes) belong in assets, not utils
+- **100% reusable**: All helpers can be used across different projects without modification
 
 ### The "Use" Hierarchy
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │  1. RESOURCES (defs/resources.py)                                   │
-│     Provide raw connections (AsyncClient, Neo4j Driver)             │
+│     Provide raw connections (AsyncClient, Neo4j Driver, ChromaDB)   │
 │                              │                                      │
 │                              ▼                                      │
 │  2. UTILS (utils/*.py)                                              │
 │     Use connections to perform specific actions                     │
-│     (fetch_sparql_query, async_write_json_file)                     │
+│     (fetch_sparql_query, parse_lastfm_artist_response)              │
 │                              │                                      │
 │                              ▼                                      │
 │  3. ASSETS (defs/assets/*.py)                                       │
 │     Orchestrate Utils to achieve business goals                     │
-│     (Extract Artists, Build Knowledge Graph)                        │
+│     (Extract Artists, Build Knowledge Graph, Ingest Vector DB)      │
 │                              │                                      │
 │                              ▼                                      │
 │  4. I/O MANAGERS (defs/io_managers.py)                              │
@@ -226,7 +230,7 @@ graph TD
     end
 
     subgraph "Stage 3: Knowledge Graph"
-        D & E & F & G --> H[ingest_graph_db]
+        D & E & G --> H[ingest_graph_db]
         H -->|Nodes & Relationships| I[(Neo4j Aura)]
     end
 
@@ -234,12 +238,16 @@ graph TD
         D -->|Wikipedia URLs| J[extract_wikipedia_articles]
         J -->|Clean & Chunk| K[Text Splitter]
         K -->|Enrich Metadata| L[wikipedia_articles.jsonl]
-        L -->|Embeddings| M[(ChromaDB)]
+    end
+
+    subgraph "Stage 5: Vector Ingestion"
+        L -->|Nomic Embeddings| M[ingest_vector_db]
+        M -->|Upsert| N[(ChromaDB)]
     end
 
     style A fill:#e1f5fe
     style I fill:#c8e6c9
-    style M fill:#fff3e0
+    style N fill:#fff3e0
 ```
 
 ### Asset Dependency Graph
@@ -253,7 +261,8 @@ graph TD
 | `releases` | `artists` | `list[Release]` | Parquet |
 | `tracks` | `releases` | `list[Track]` | Parquet |
 | `wikipedia_articles` | `artists`, `genres`, `artist_index` | `list[list[Article]]` | JSONL |
-| `ingest_graph_db` | `artists`, `releases`, `tracks`, `genres` | `MaterializeResult` | None (sink) |
+| `ingest_graph_db` | `artists`, `releases`, `genres` | `MaterializeResult` | None (sink) |
+| `ingest_vector_db` | `wikipedia_articles` | `MaterializeResult` | None (sink) |
 
 ### Partitioning Strategy
 
@@ -305,27 +314,21 @@ We construct a deterministic Knowledge Graph to map the relationships between th
 erDiagram
     Artist ||--o{ Genre : HAS_GENRE
     Artist ||--o{ Artist : SIMILAR_TO
-    Album ||--|| Artist : PERFORMED_BY
-    Album ||--o{ Track : CONTAINS_TRACK
-    Album ||--o{ Genre : HAS_GENRE
-    Track ||--o{ Genre : HAS_GENRE
+    Release ||--|| Artist : PERFORMED_BY
     Genre ||--o{ Genre : SUBGENRE_OF
 
     Artist {
         string id
         string name
+        string mbid
         string country
         string_list aliases
         string_list tags
     }
-    Album {
+    Release {
         string id
         string title
         int year
-    }
-    Track {
-        string id
-        string title
     }
     Genre {
         string id
@@ -336,17 +339,13 @@ erDiagram
 
 #### Nodes (Entities)
 - **Artist:** The core entity (e.g., "Daft Punk").
-- **Album:** Major releases linked to artists.
-- **Track:** Individual songs linked to albums.
+- **Release:** Major releases (Albums/Singles) linked to artists.
 - **Genre:** A hierarchical taxonomy of musical styles (e.g., "French House" -> "House" -> "Electronic").
 
 #### Edges (Relationships)
 - `(Artist)-[:HAS_GENRE]->(Genre)`
 - `(Artist)-[:SIMILAR_TO]->(Artist)`: Derived from Last.fm community data.
-- `(Album)-[:PERFORMED_BY]->(Artist)`
-- `(Album)-[:CONTAINS_TRACK]->(Track)`
-- `(Album)-[:HAS_GENRE]->(Genre)`
-- `(Track)-[:HAS_GENRE]->(Genre)`
+- `(Release)-[:PERFORMED_BY]->(Artist)`
 - `(Genre)-[:SUBGENRE_OF]->(Genre)`: Enables hierarchical graph traversal.
 
 **Dataset Statistics:**
@@ -354,15 +353,16 @@ erDiagram
 - **Nodes:** ~47,584 (Artists, Releases, Genres).
 - **Edges:** ~88,828.
 
-### 3. Vector Database (Chroma)
+### 3. Vector Database (ChromaDB)
 
 To enable semantic search, the processed text chunks are indexed in **ChromaDB**.
 
 - **Collection Name:** `music_rag_collection`
 - **Embedding Model:** `nomic-embed-text-v1.5` (via Nomic AI)
 - **Distance Metric:** Cosine Similarity
+- **Device Support:** Automatic detection of CUDA, MPS (Apple Silicon), or CPU
 
-The `wikipedia_articles.jsonl` dataset serves as the source of truth. A specialized ingestion process (conceptually part of the RAG pipeline) reads these files, generates embeddings using the Nomic model, and upserts them into the vector store. This allows for natural language queries like "Which electronic artists were influenced by 80s synth-pop?".
+The `ingest_vector_db` asset reads from `wikipedia_articles.jsonl`, generates embeddings using the Nomic model with automatic GPU/MPS acceleration, and upserts them into the vector store. This allows for natural language queries like "Which electronic artists were influenced by 80s synth-pop?".
 
 ---
 
@@ -409,6 +409,7 @@ class Neo4jResource(ConfigurableResource):
     def get_driver(self, context) -> Generator[Driver, None, None]:
         driver = GraphDatabase.driver(self.uri, auth=(self.username, self.password))
         try:
+            driver.verify_connectivity()
             yield driver
         finally:
             driver.close()
@@ -418,6 +419,41 @@ class Neo4jResource(ConfigurableResource):
 def ingest_graph_db(neo4j: Neo4jResource, ...):
     with neo4j.get_driver(context) as driver:
         # Use driver
+```
+
+### Helper Delegation Pattern
+
+Assets delegate parsing and transformation logic to helper modules for reusability:
+
+```python
+# In asset (orchestration only)
+from data_pipeline.utils.lastfm_helpers import parse_lastfm_artist_response
+
+lastfm_data = await async_fetch_lastfm_data_with_cache(...)
+lastfm_info = parse_lastfm_artist_response(lastfm_data)  # Delegated parsing
+
+return Artist(
+    tags=lastfm_info.tags,
+    similar_artists=lastfm_info.similar_artists,
+    ...
+)
+```
+
+### Retry Logic for Cloud Databases
+
+Neo4j Aura connections include retry logic with exponential backoff:
+
+```python
+def _execute_with_retry(driver, query, max_retries=3, base_delay=2.0):
+    for attempt in range(max_retries + 1):
+        try:
+            with driver.session() as session:
+                return session.run(query).single()
+        except (ServiceUnavailable, SessionExpired) as e:
+            if attempt < max_retries:
+                time.sleep(base_delay * (2 ** attempt))
+            else:
+                raise
 ```
 
 ### Caching Strategy
@@ -450,7 +486,8 @@ graph_rag_data_pipeline_1/
 │       │   │   ├── extract_releases.py
 │       │   │   ├── extract_tracks.py
 │       │   │   ├── extract_wikipedia_articles.py
-│       │   │   └── ingest_graph_db.py
+│       │   │   ├── ingest_graph_db.py
+│       │   │   └── ingest_vector_db.py
 │       │   ├── resources.py        # Connection factories
 │       │   ├── io_managers.py      # Parquet/JSONL persistence
 │       │   ├── partitions.py       # Decade partitioning
@@ -463,7 +500,8 @@ graph_rag_data_pipeline_1/
 │           ├── wikipedia_helpers.py
 │           ├── musicbrainz_helpers.py
 │           ├── lastfm_helpers.py
-│           └── neo4j_helpers.py
+│           ├── neo4j_helpers.py
+│           └── chroma_helpers.py
 ├── tests/                          # Mirrors src/ structure
 ├── scripts/                        # Standalone CLI utilities
 ├── data_volume/                    # Local data & caches
@@ -562,8 +600,8 @@ The pipeline includes automated **asset checks** that validate data after materi
 | Check | Asset | Validation Rule |
 |-------|-------|-----------------|
 | `check_artist_index_integrity` | `artist_index` | No null IDs/names, no duplicates |
-| `check_artists_completeness` | `artists` | ≥50% of artists have genres or tags |
-| `check_releases_per_artist` | `releases` | Average releases per artist ≥ 1 |
+| `check_artists_completeness` | `artists` | >= 50% of artists have genres or tags |
+| `check_releases_per_artist` | `releases` | Average releases per artist >= 1 |
 | `check_tracks_schema` | `tracks` | No null titles or album_ids |
 | `check_genres_quality` | `genres` | No null genre names |
 
@@ -573,6 +611,7 @@ The pipeline includes automated **asset checks** that validate data after materi
 
 - [Dagster Documentation](https://docs.dagster.io/)
 - [Neo4j Graph Database](https://neo4j.com/docs/)
+- [ChromaDB Documentation](https://docs.trychroma.com/)
 - [uv Documentation](https://docs.astral.sh/uv/)
 - [Nomic AI Documentation](https://docs.nomic.ai/)
 - [Polars User Guide](https://docs.pola.rs/)
