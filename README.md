@@ -10,6 +10,8 @@ Part 1 is a basic Data Pipeline made with **Dagster**, which orchestrates the da
 
 This pipeline is specifically tuned for the **Electronic Music** domain. It captures the rich, interconnected history of electronic artists, from early pioneers to contemporary producers. The dataset encompasses a wide range of sub-genres—including Techno, House, Ambient, IDM, and Drum & Bass—modeling the complex relationships between artists, their releases, and the evolving taxonomy of electronic musical styles.
 
+![Knowledge Graph in Neo4j Aura](docs/neo4j_query_depeche_mode_similar_artists_and_genres.png)
+
 ## About the Project
 
 This data pipeline orchestrates data ingestion from multiple sources to build a rich dataset of music artists:
@@ -119,7 +121,7 @@ This project implements a **strict separation of concerns** following Dagster's 
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
----
+![Panel of Neo4j Aura](docs/dagster_lineage.png)
 
 ## Separation of Concerns
 
@@ -215,6 +217,8 @@ The pipeline transforms raw data from external APIs into two optimized formats: 
 
 ### Pipeline Flow
 
+![Panel of Neo4j Aura](docs/dagster_Assets.png)
+
 ```mermaid
 graph TD
     subgraph "Stage 1: Artist Discovery"
@@ -308,8 +312,9 @@ We process Wikipedia articles to create a high-quality corpus for Retrieval-Augm
 
 We construct a deterministic Knowledge Graph to map the relationships between the musical entities. This allows for precise multi-hop queries (e.g., "Find all sub-genres of 'House' that originated in 'France'").
 
-#### Graph Schema
+![Panel of Neo4j Aura](docs/neo4j_panel.png)
 
+#### Graph Schema
 ```mermaid
 erDiagram
     Artist ||--o{ Genre : HAS_GENRE
