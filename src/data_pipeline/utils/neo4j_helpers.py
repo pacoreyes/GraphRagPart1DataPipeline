@@ -13,7 +13,6 @@ from typing import Any, LiteralString, cast
 from dagster import AssetExecutionContext
 from neo4j import Driver
 from neo4j.exceptions import ServiceUnavailable, SessionExpired
-from tqdm import tqdm
 
 
 def execute_cypher(
@@ -46,29 +45,6 @@ def execute_cypher(
                 session.run(cast(LiteralString, query), params or {}).consume()
     except Exception as e:
         raise e
-
-
-def execute_cypher_with_progress(
-    driver: Driver,
-    query: str,
-    total_count: int,
-    batch_size: int,
-    description: str,
-    database: str = "neo4j",
-) -> None:
-    """
-    Executes a Cypher query using periodic commits and provides a tqdm progress bar.
-    This helper is designed for CALL { ... } IN TRANSACTIONS queries where the
-    total number of outer-loop entities is known.
-    """
-    with tqdm(total=total_count, desc=description, unit="items") as pbar:
-        try:
-            with driver.session(database=database) as session:
-                # We use session.run because CALL IN TRANSACTIONS requires auto-commit
-                session.run(cast(LiteralString, query)).consume()
-                pbar.update(total_count)
-        except Exception as e:
-            raise e
 
 
 def _execute_with_retry(

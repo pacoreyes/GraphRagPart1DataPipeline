@@ -56,6 +56,14 @@ class Track(msgspec.Struct, kw_only=True, omit_defaults=True):
     album_id: str  # Drop after ingesting in graph (embedded in Release node)
 
 
+class Country(msgspec.Struct, kw_only=True, omit_defaults=True):
+    """
+    Represents a country entity resolved against Wikidata.
+    """
+    id: str  # Wikidata QID
+    name: str
+
+
 class ArticleMetadata(msgspec.Struct, kw_only=True, omit_defaults=True):
     """
     Metadata for a Wikipedia article chunk.
@@ -135,3 +143,4 @@ def _generate_polars_schema(model_cls: type[msgspec.Struct]) -> dict[str, pl.Dat
 # --- Auto-generated Polars Schemas ---
 RELEASE_SCHEMA = _generate_polars_schema(Release)
 TRACK_SCHEMA = _generate_polars_schema(Track)
+COUNTRY_SCHEMA = _generate_polars_schema(Country)

@@ -66,7 +66,7 @@ def test_ingest_graph_db_executes_related_to_query(mock_neo4j_resource):
     # Verify the result status
     assert result.metadata["status"] == "success"
     
-    # Verify that execute_cypher_with_progress was called with our new query
+    # Verify that the query was executed
     session_run_calls = mock_session.run.call_args_list
     session_write_calls = mock_session.execute_write.call_args_list
     # driver_calls = mock_driver.execute_query.call_args_list

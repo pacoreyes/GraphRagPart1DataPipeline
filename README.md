@@ -176,7 +176,7 @@ Contains **domain-agnostic, reusable helpers** that can be used across different
 | `wikipedia_helpers.py` | Wikipedia API adapter with section parsing | `async_fetch_wikipedia_article()`, `parse_wikipedia_sections()` |
 | `musicbrainz_helpers.py` | MusicBrainz API adapter with pagination and filtering | `fetch_artist_release_groups_async()`, `filter_release_groups()`, `select_best_release()`, `parse_release_year()` |
 | `lastfm_helpers.py` | Last.fm API adapter with response parsing | `async_fetch_lastfm_data_with_cache()`, `parse_lastfm_artist_response()` |
-| `neo4j_helpers.py` | Generic Cypher execution with retry logic | `execute_cypher()`, `clear_database()`, `execute_cypher_with_progress()` |
+| `neo4j_helpers.py` | Generic Cypher execution with retry logic | `execute_cypher()`, `clear_database()` |
 | `chroma_helpers.py` | ChromaDB embedding utilities | `NomicEmbeddingFunction`, `get_device()`, `generate_doc_id()` |
 
 **Design Rules for Utils (CLAUDE.md Compliance):**

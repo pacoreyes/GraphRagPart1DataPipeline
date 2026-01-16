@@ -70,7 +70,7 @@ def ingest_graph_db(
     genres_df = genres.collect()
     countries_df = countries.collect()
 
-    # Group tracks by album_id and build embedded track lists with position
+    # Group tracks by album_id and build embedded track lists with position.
     # Position is assigned based on order (1, 2, 3, ...)
     # Neo4j only supports arrays of primitives, so we format as "position. title"
     tracks_grouped = (

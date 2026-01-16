@@ -51,6 +51,7 @@ class NomicEmbeddingFunction(EmbeddingFunction[Documents]):
     """
 
     def __init__(self, model_name: str, device: str) -> None:  # type: ignore
+        super().__init__()
         # We ignore type checking here because EmbeddingFunction protocol might
         # have a different signature, but we need these specific args.
         self._model = SentenceTransformer(
@@ -60,20 +61,20 @@ class NomicEmbeddingFunction(EmbeddingFunction[Documents]):
             self._model.half()
         self._model.eval()
 
-    def __call__(self, input: Documents) -> Embeddings:
+    def __call__(self, texts: Documents) -> Embeddings:
         """
         Generates embeddings for documents.
 
         Documents are expected to already contain the 'search_document:' prefix.
 
         Args:
-            input: List of document strings to embed.
+            texts: List of document strings to embed.
 
         Returns:
             List of embedding vectors.
         """
         embeddings = self._model.encode(
-            input,
+            texts,
             convert_to_numpy=True,
             show_progress_bar=False,
             normalize_embeddings=True,
@@ -81,23 +82,23 @@ class NomicEmbeddingFunction(EmbeddingFunction[Documents]):
         # tolist() converts numpy array to list of floats, which matches Embeddings type alias
         return cast(Embeddings, embeddings.tolist())
 
-    def embed_query(self, input: Union[Documents, str]) -> Embeddings:
+    def embed_query(self, texts: Union[Documents, str]) -> Embeddings:
         """
         Generates embedding for a search query.
 
         Adds the 'search_query:' prefix required by Nomic for retrieval.
 
         Args:
-            input: Search query string or list of strings.
+            texts: Search query string or list of strings.
 
         Returns:
             Embedding vector for the query.
         """
         # Handle single string input which is common for query embedding
-        if isinstance(input, str):
-            texts = [input]
+        if isinstance(texts, str):
+            texts = [texts]
         else:
-            texts = input
+            texts = texts
 
         prefixed = [f"search_query: {t}" for t in texts]
         

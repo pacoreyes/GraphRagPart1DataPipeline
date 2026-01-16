@@ -141,6 +141,9 @@ class WikidataResource(ConfigurableResource):
     """
     Resource for making HTTP requests to Wikidata (SPARQL).
     """
+    api_url: str
+    cache_dir: str
+    rate_limit_delay: float
     user_agent: str
     timeout: int
     impersonate: str = "chrome"
@@ -209,6 +212,9 @@ resource_defs: dict[str, Any] = {
         password=EnvVar("NEO4J_PASSWORD"),
     ),
     "wikidata": WikidataResource(
+        api_url=settings.WIKIDATA_ACTION_API_URL,
+        cache_dir=str(settings.WIKIDATA_CACHE_DIRPATH),
+        rate_limit_delay=settings.WIKIDATA_ACTION_RATE_LIMIT_DELAY,
         user_agent=settings.USER_AGENT,
         timeout=settings.WIKIDATA_SPARQL_REQUEST_TIMEOUT,
         impersonate="chrome"
