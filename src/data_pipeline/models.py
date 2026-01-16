@@ -68,11 +68,11 @@ class ArticleMetadata(msgspec.Struct, kw_only=True, omit_defaults=True):
     similar_artists: Optional[list[str]] = None
     genres: Optional[list[str]] = None
     inception_year: Optional[int] = None
+    country: str
     wikipedia_url: str
     wikidata_uri: str
     chunk_index: int
     total_chunks: int
-    country: str
 
 
 class Article(msgspec.Struct, kw_only=True, omit_defaults=True):

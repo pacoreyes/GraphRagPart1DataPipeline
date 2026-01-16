@@ -40,7 +40,7 @@ class NomicEmbeddingFunction(EmbeddingFunction[Documents]):
     ChromaDB-compatible embedding function using Nomic model.
 
     This function assumes documents are ALREADY prefixed with 'search_document:'
-    from the upstream asset (extract_wikipedia_articles). It does NOT add
+    from the upstream asset (extract_articles). It does NOT add
     prefixes during embedding generation.
 
     For query embedding, use `embed_query()` which adds the 'search_query:' prefix.

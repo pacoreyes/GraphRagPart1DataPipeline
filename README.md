@@ -16,10 +16,13 @@ This pipeline is specifically tuned for the **Electronic Music** domain. It capt
 
 This data pipeline orchestrates data ingestion from multiple sources to build a rich dataset of music artists:
 
-- **Wikidata API** (using SPARQL & Action API)
-- **Wikipedia API** (Text Content)
-- **Last.fm API** (Metadata & Tags)
-- **MusicBrainz API** (Releases & Tracks)
+* **Structured Data**
+  - **Wikidata API** (Artists & Genres—using SPARQL & Action API)
+  - **Last.fm API** (Similar Artists & Tags)
+  - **MusicBrainz API** (Releases & Tracks)
+* **unstructured Data**
+  - **Wikipedia API** (Articles about Artists and Genres)
+
 
 The goal is to prepare unstructured data (Wikipedia articles of musicians, bands, and artists) and split it into chunks enriched with structured metadata. This prepares the data for a hybrid search approach:
 
@@ -317,7 +320,7 @@ We construct a deterministic Knowledge Graph to map the relationships between th
 #### Graph Schema
 ```mermaid
 erDiagram
-    Artist ||--o{ Genre : HAS_GENRE
+    Artist ||--o{ Genre : PLAYS_GENRE
     Artist ||--o{ Artist : SIMILAR_TO
     Release ||--|| Artist : PERFORMED_BY
     Genre ||--o{ Genre : SUBGENRE_OF
@@ -348,7 +351,7 @@ erDiagram
 - **Genre:** A hierarchical taxonomy of musical styles (e.g., "French House" -> "House" -> "Electronic").
 
 #### Edges (Relationships)
-- `(Artist)-[:HAS_GENRE]->(Genre)`
+- `(Artist)-[:PLAYS_GENRE]->(Genre)`
 - `(Artist)-[:SIMILAR_TO]->(Artist)`: Derived from Last.fm community data.
 - `(Release)-[:PERFORMED_BY]->(Artist)`
 - `(Genre)-[:SUBGENRE_OF]->(Genre)`: Enables hierarchical graph traversal.
