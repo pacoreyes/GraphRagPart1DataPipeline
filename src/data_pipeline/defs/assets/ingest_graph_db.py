@@ -48,13 +48,14 @@ def _create_indexes(driver: Driver, context: AssetExecutionContext) -> None:
 
 @asset(
     name="graph_db",
-    description="Ingests in Neo4j Artists, Releases, and Genres.",
+    description="Ingests in Neo4j Artists, Releases (with tracks), and Genres.",
 )
 def ingest_graph_db(
-    context: AssetExecutionContext, 
+    context: AssetExecutionContext,
     neo4j: Neo4jResource,
     artists: pl.LazyFrame,
     releases: pl.LazyFrame,
+    tracks: pl.LazyFrame,
     genres: pl.LazyFrame,
     countries: pl.LazyFrame
 ) -> MaterializeResult:
@@ -65,8 +66,39 @@ def ingest_graph_db(
     # We must collect because we need to iterate in batches for Neo4j
     artists_df = artists.collect()
     releases_df = releases.collect()
+    tracks_df = tracks.collect()
     genres_df = genres.collect()
     countries_df = countries.collect()
+
+    # Group tracks by album_id and build embedded track lists with position
+    # Position is assigned based on order (1, 2, 3, ...)
+    # Neo4j only supports arrays of primitives, so we format as "position. title"
+    tracks_grouped = (
+        tracks_df
+        .with_row_index("_row_idx")
+        .with_columns(
+            pl.col("_row_idx")
+            .rank("ordinal")
+            .over("album_id")
+            .cast(pl.Int64)
+            .alias("position")
+        )
+        .with_columns(
+            (pl.col("position").cast(pl.Utf8) + ". " + pl.col("title")).alias("track_entry")
+        )
+        .group_by("album_id")
+        .agg(
+            pl.col("track_entry").alias("tracks")
+        )
+    )
+
+    # Join grouped tracks onto releases (left join to keep releases without tracks)
+    releases_df = releases_df.join(
+        tracks_grouped,
+        left_on="id",
+        right_on="album_id",
+        how="left"
+    )
 
     batch_size = settings.GRAPH_DB_INGESTION_BATCH_SIZE
 
@@ -132,15 +164,16 @@ def ingest_graph_db(
                 artist_count += len(batch_data)
         context.log.info(f"Loaded {artist_count} artists.")
 
-        # 3. Releases
+        # 3. Releases (with embedded tracks)
         release_count = 0
         # noinspection SqlNoDataSourceInspection
         release_query = """
         UNWIND $batch AS row
         CREATE (:Release {
-            id: row.id, 
-            title: row.title, 
-            year: row.year
+            id: row.id,
+            title: row.title,
+            year: row.year,
+            tracks: row.tracks
         });
         """
         if not releases_df.is_empty():
@@ -266,6 +299,7 @@ def ingest_graph_db(
                 "genres": len(genres_df),
                 "artists": len(artists_df),
                 "releases": len(releases_df),
+                "tracks": len(tracks_df),
                 "countries": len(countries_df)
             },
             "nodes_ingested": {

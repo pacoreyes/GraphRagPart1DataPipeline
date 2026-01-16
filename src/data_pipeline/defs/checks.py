@@ -31,10 +31,10 @@ def check_artist_index_integrity(artist_index: pl.LazyFrame):
         .item()
     )
     duplicate_count = dup_check if dup_check is not None else 0
-    
+
     null_ids = stats["null_ids"]
     null_names = stats["null_names"]
-    
+
     return AssetCheckResult(
         passed=bool(null_ids == 0 and null_names == 0 and duplicate_count == 0),
         metadata={
@@ -61,9 +61,9 @@ def check_artists_completeness(artists: pl.LazyFrame):
     total_artists = stats["total"]
     if total_artists == 0:
         return AssetCheckResult(passed=True, description="No artists to check.")
-        
+
     completeness_ratio = stats["with_metadata"] / total_artists
-    
+
     return AssetCheckResult(
         passed=bool(completeness_ratio > 0.5),  # Expect at least 50% to have some metadata
         metadata={"completeness_ratio": float(completeness_ratio)}
@@ -77,15 +77,15 @@ def check_releases_per_artist(releases: pl.LazyFrame):
         pl.len().alias("count"),
         pl.col("artist_id").n_unique().alias("unique_artists")
     ]).collect().to_dicts()[0]
-    
+
     count = stats["count"]
     unique_artists = stats["unique_artists"]
 
     if count == 0:
         return AssetCheckResult(passed=True)
-        
+
     avg_releases = count / unique_artists if unique_artists > 0 else 0
-    
+
     return AssetCheckResult(
         passed=bool(avg_releases >= 1.0),
         metadata={"avg_releases_per_artist": float(avg_releases)}
@@ -99,10 +99,10 @@ def check_tracks_schema(tracks: pl.LazyFrame):
         pl.col("title").null_count().alias("null_titles"),
         pl.col("album_id").null_count().alias("null_albums")
     ]).collect().to_dicts()[0]
-    
+
     null_titles = stats["null_titles"]
     null_albums = stats["null_albums"]
-    
+
     return AssetCheckResult(
         passed=bool(null_titles == 0 and null_albums == 0),
         metadata={"null_titles": null_titles, "null_albums": null_albums}

@@ -50,17 +50,18 @@ def mock_neo4j_resource():
 
 def test_ingest_graph_db_executes_related_to_query(mock_neo4j_resource):
     resource, mock_driver, mock_session = mock_neo4j_resource
-    
+
     # Create dummy input data
     artists_lf = pl.LazyFrame({"id": ["A1"], "name": ["Artist1"], "mbid": ["m1"], "country": ["US"], "aliases": [None], "tags": [None], "genres": [None], "similar_artists": [None]})
     releases_lf = pl.LazyFrame({"id": ["R1"], "title": ["Album1"], "year": [2020], "artist_id": ["A1"]})
+    tracks_lf = pl.LazyFrame({"id": ["T1", "T2"], "title": ["Track1", "Track2"], "album_id": ["R1", "R1"]})
     genres_lf = pl.LazyFrame({"id": ["G1"], "name": ["Rock"], "aliases": [["Hard Rock"]], "parent_ids": [None]})
     countries_lf = pl.LazyFrame({"id": ["Q30"], "name": ["US"]})
-    
+
     context = build_asset_context()
-    
+
     # Run the asset
-    result = ingest_graph_db(context, resource, artists_lf, releases_lf, genres_lf, countries_lf)
+    result = ingest_graph_db(context, resource, artists_lf, releases_lf, tracks_lf, genres_lf, countries_lf)
     
     # Verify the result status
     assert result.metadata["status"] == "success"

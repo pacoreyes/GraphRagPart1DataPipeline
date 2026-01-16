@@ -26,7 +26,7 @@ from data_pipeline.defs.resources import MusicBrainzResource
     description="Extract Tracks dataset from the Releases list using MusicBrainz API.",
 )
 async def extract_tracks(
-    context: AssetExecutionContext, 
+    context: AssetExecutionContext,
     musicbrainz: MusicBrainzResource,
     releases: pl.LazyFrame
 ) -> list[Track]:
@@ -60,7 +60,7 @@ async def extract_tracks(
         for i, row in enumerate(rows, 1):
             release_group_mbid = row["id"]
             release_title = row["title"]
-            
+
             context.log.info(f"[{i}/{total_releases}] Processing tracks for: {release_title}")
 
             # A. Find representative Release
@@ -73,7 +73,7 @@ async def extract_tracks(
                 headers={},
                 rate_limit_delay=musicbrainz.rate_limit_delay
             )
-            
+
             # Select best release (Official status preferred, oldest date)
             best_release = select_best_release(mb_releases)
             if not best_release:
@@ -91,7 +91,7 @@ async def extract_tracks(
                 headers={},
                 rate_limit_delay=musicbrainz.rate_limit_delay
             )
-            
+
             for t in mb_tracks:
                 all_tracks.append(
                     Track(

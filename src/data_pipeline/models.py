@@ -49,11 +49,11 @@ class Release(msgspec.Struct, kw_only=True, omit_defaults=True):
 
 class Track(msgspec.Struct, kw_only=True, omit_defaults=True):
     """
-    Represents a music track.
+    Represents a music track extracted from MusicBrainz.
     """
     id: str
     title: str
-    album_id: str  # Drop after ingesting in graph
+    album_id: str  # Drop after ingesting in graph (embedded in Release node)
 
 
 class ArticleMetadata(msgspec.Struct, kw_only=True, omit_defaults=True):
