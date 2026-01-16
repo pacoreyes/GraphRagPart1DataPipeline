@@ -9,7 +9,10 @@ from transformers import AutoTokenizer
 from data_pipeline.models import Article, ArticleMetadata
 from data_pipeline.settings import settings
 from data_pipeline.utils.network_helpers import yield_batches_concurrently, AsyncClient
-from data_pipeline.utils.data_transformation_helpers import normalize_and_clean_text
+from data_pipeline.utils.data_transformation_helpers import (
+    normalize_and_clean_text,
+    format_list_natural_language,
+)
 from data_pipeline.utils.wikidata_helpers import (
     async_fetch_wikidata_entities_batch,
     extract_wikidata_wikipedia_url
@@ -119,7 +122,34 @@ async def extract_wikipedia_articles(
         if not raw_text:
             return []
 
-        # 1. Parse sections and chunk text
+        # Prepare Metadata Strings
+        genre_ids = artist_row.get("genres") or []
+        genre_names = [genres_map[str(gid)] for gid in genre_ids if str(gid) in genres_map]
+        
+        country = artist_row.get("country")
+        year = inception_year_map.get(qid)
+        tags = artist_row.get("tags") or []
+        
+        # Build Context String
+        context_parts = []
+        
+        formatted_genres = format_list_natural_language(genre_names)
+        if formatted_genres:
+            context_parts.append(f"Genres: {formatted_genres}")
+            
+        if country:
+            context_parts.append(f"Country: {country}")
+            
+        if year:
+            context_parts.append(f"Active since: {year}")
+            
+        formatted_tags = format_list_natural_language(tags)
+        if formatted_tags:
+            context_parts.append(f"Is related to {formatted_tags}")
+            
+        context_str = "; ".join(context_parts)
+
+        # Parse sections, clean, prepend context, and then chunk
         all_chunks_with_context = []
         for section in parse_wikipedia_sections(
             raw_text,
@@ -130,27 +160,37 @@ async def extract_wikipedia_articles(
             if not cleaned_content:
                 continue
 
-            section_chunks = text_splitter.split_text(cleaned_content)
+            # Construct Full Text for this section with Metadata prepended. Format:
+            # "search_document: Topic: {Artist}. Context: {Metadata} | {Artist} (Section: {Section}) | {Content}"
+            header_parts = [f"search_document: Topic: {title}."]
+            if context_str:
+                header_parts.append(f"Context: {context_str} |")
+            else:
+                header_parts.append("|")
+            
+            header_parts.append(f"{artist_name} (Section: {section.name}) |")
+            full_header = " ".join(header_parts)
+            
+            # Combine header and content BEFORE splitting
+            combined_text = f"{full_header} {cleaned_content}"
+
+            section_chunks = text_splitter.split_text(combined_text)
             for chunk in section_chunks:
                 all_chunks_with_context.append((section.name, chunk))
 
         total_chunks = len(all_chunks_with_context)
-        genre_ids = artist_row.get("genres") or []
-        genre_names = [genres_map[gid] for gid in genre_ids if gid in genres_map]
-        year = inception_year_map.get(qid)
         
         results = []
-        for i, (section, chunk_text) in enumerate(all_chunks_with_context):
-            enriched_text = f"search_document: {artist_name} (Section: {section}) | {chunk_text}"
+        for i, (_, chunk_text) in enumerate(all_chunks_with_context):
             chunk_index = i + 1
             article_id = f"{qid}_chunk_{chunk_index}"
 
             meta = ArticleMetadata(
                 title=title.replace("_", " "),
                 artist_name=artist_name,
-                country=artist_row.get("country") or "Unknown",
+                country=country or "Unknown",
                 aliases=artist_row.get("aliases") or None,
-                tags=artist_row.get("tags") or None,
+                tags=tags or None,
                 similar_artists=artist_row.get("similar_artists") or None,
                 genres=genre_names or None,
                 inception_year=year,
@@ -159,7 +199,7 @@ async def extract_wikipedia_articles(
                 chunk_index=chunk_index,
                 total_chunks=total_chunks
             )
-            results.append(Article(id=article_id, metadata=meta, article=enriched_text))
+            results.append(Article(id=article_id, metadata=meta, article=chunk_text))
             
         return results
 

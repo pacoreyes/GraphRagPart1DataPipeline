@@ -8,6 +8,7 @@
 # -----------------------------------------------------------
 
 import asyncio
+import hashlib
 from pathlib import Path
 from typing import Any, Callable, Optional, cast
 
@@ -378,3 +379,98 @@ def extract_wikidata_claim_ids(
             if datavalue.get("type") == "wikibase-entityid":
                 ids.append((datavalue.get("value") or {}).get("id"))
     return [i for i in ids if i]
+
+
+async def async_resolve_labels_to_qids(
+    context: AssetExecutionContext,
+    labels: list[str],
+    api_url: str,
+    cache_dir: Path,
+    entity_type: str = "item",
+    language: str = "en",
+    timeout: int = 60,
+    rate_limit_delay: float = 0.0,
+    concurrency_limit: int = 5,
+    headers: Optional[dict[str, str]] = None,
+    client: Optional[AsyncClient] = None,
+) -> dict[str, str]:
+    """
+    Resolves a list of labels (e.g., country names) to their Wikidata QIDs.
+    Uses 'wbsearchentities' API action.
+    """
+    if not labels:
+        return {}
+
+    resolved_map = {}
+    to_search = []
+
+    # 1. Check Cache
+    async def check_cache(label: str) -> tuple[str, Optional[str]]:
+        label_hash = hashlib.md5(label.encode("utf-8")).hexdigest()
+        cache_file = cache_dir / f"search_{label_hash}.json"
+        data = await async_read_json_file(cache_file)
+        if data and isinstance(data, list) and len(data) > 0:
+            # Assuming the first result is the correct one for exact labels
+            return label, data[0].get("id")
+        return label, None
+
+    cache_results = await asyncio.gather(*[check_cache(lbl) for lbl in labels])
+
+    for label, qid in cache_results:
+        if qid:
+            resolved_map[label] = qid
+        else:
+            to_search.append(label)
+
+    if not to_search:
+        return resolved_map
+
+    context.log.info(f"Searching {len(to_search)} labels on Wikidata API...")
+
+    # 2. Search missing from API
+    async def search_and_cache(label: str) -> tuple[str, Optional[str]]:
+        params = {
+            "action": "wbsearchentities",
+            "search": label,
+            "format": "json",
+            "language": language,
+            "type": entity_type,
+        }
+
+        try:
+            response = await make_async_request_with_retries(
+                context=context,
+                url=api_url,
+                method="GET",
+                params=params,
+                headers=headers,
+                timeout=timeout,
+                rate_limit_delay=rate_limit_delay,
+                client=client,
+            )
+            data = response.json()
+            search_results = data.get("search", [])
+
+            if search_results:
+                label_hash = hashlib.md5(label.encode("utf-8")).hexdigest()
+                cache_file = cache_dir / f"search_{label_hash}.json"
+                await async_write_json_file(cache_file, search_results)
+                return label, search_results[0].get("id")
+            
+            return label, None
+        except Exception as e:
+            context.log.warning(f"Failed to search Wikidata for label '{label}': {e}")
+            return label, None
+
+    results = await run_tasks_concurrently(
+        items=to_search,
+        processor=search_and_cache,
+        concurrency_limit=concurrency_limit,
+        description="Searching Wikidata Labels",
+    )
+
+    for label, qid in results:
+        if qid:
+            resolved_map[label] = qid
+
+    return resolved_map

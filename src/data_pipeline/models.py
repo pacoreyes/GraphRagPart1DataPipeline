@@ -20,11 +20,11 @@ class Artist(msgspec.Struct, kw_only=True, omit_defaults=True):
     id: str
     name: str
     mbid: str
-    country: str
+    country: str  # Drop after ingesting in graph
     aliases: Optional[list[str]] = None
-    genres: Optional[list[str]] = None  # List of QIDs
+    genres: Optional[list[str]] = None  # Drop after ingesting in graph
     tags: Optional[list[str]] = None
-    similar_artists: Optional[list[str]] = None
+    similar_artists: Optional[list[str]] = None  # Drop after ingesting in graph
 
 
 class Genre(msgspec.Struct, kw_only=True, omit_defaults=True):
@@ -34,7 +34,7 @@ class Genre(msgspec.Struct, kw_only=True, omit_defaults=True):
     id: str
     name: str
     aliases: Optional[list[str]] = None
-    parent_ids: Optional[list[str]] = None
+    parent_ids: Optional[list[str]] = None  # Drop after ingesting in graph
 
 
 class Release(msgspec.Struct, kw_only=True, omit_defaults=True):
@@ -44,7 +44,7 @@ class Release(msgspec.Struct, kw_only=True, omit_defaults=True):
     id: str
     title: str
     year: Optional[int] = None
-    artist_id: str
+    artist_id: str  # Drop after ingesting in graph
 
 
 class Track(msgspec.Struct, kw_only=True, omit_defaults=True):
@@ -53,7 +53,7 @@ class Track(msgspec.Struct, kw_only=True, omit_defaults=True):
     """
     id: str
     title: str
-    album_id: str
+    album_id: str  # Drop after ingesting in graph
 
 
 class ArticleMetadata(msgspec.Struct, kw_only=True, omit_defaults=True):

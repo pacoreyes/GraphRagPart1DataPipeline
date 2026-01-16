@@ -16,7 +16,6 @@ from data_pipeline.settings import settings
 from data_pipeline.utils.neo4j_helpers import (
     clear_database,
     execute_cypher,
-    execute_cypher_with_progress,
 )
 from data_pipeline.defs.resources import Neo4jResource
 
@@ -32,9 +31,10 @@ def _create_indexes(driver: Driver, context: AssetExecutionContext) -> None:
         "CREATE INDEX artist_id_idx IF NOT EXISTS FOR (n:Artist) ON (n.id)",
         "CREATE INDEX artist_name_idx IF NOT EXISTS FOR (n:Artist) ON (n.name)",
         "CREATE INDEX release_id_idx IF NOT EXISTS FOR (n:Release) ON (n.id)",
-        "CREATE INDEX release_artist_id_idx IF NOT EXISTS FOR (n:Release) ON (n.artist_id)",
         "CREATE INDEX genre_id_idx IF NOT EXISTS FOR (n:Genre) ON (n.id)",
         "CREATE INDEX genre_name_idx IF NOT EXISTS FOR (n:Genre) ON (n.name)",
+        "CREATE INDEX country_id_idx IF NOT EXISTS FOR (n:Country) ON (n.id)",
+        "CREATE INDEX country_name_idx IF NOT EXISTS FOR (n:Country) ON (n.name)",
     ]
 
     for cmd in index_commands:
@@ -55,7 +55,8 @@ def ingest_graph_db(
     neo4j: Neo4jResource,
     artists: pl.LazyFrame,
     releases: pl.LazyFrame,
-    genres: pl.LazyFrame
+    genres: pl.LazyFrame,
+    countries: pl.LazyFrame
 ) -> MaterializeResult:
     """
     Dagster asset that ingests music data into the Neo4j database.
@@ -65,6 +66,7 @@ def ingest_graph_db(
     artists_df = artists.collect()
     releases_df = releases.collect()
     genres_df = genres.collect()
+    countries_df = countries.collect()
 
     batch_size = settings.GRAPH_DB_INGESTION_BATCH_SIZE
 
@@ -75,6 +77,23 @@ def ingest_graph_db(
         # --- Step 2: Node Ingestion ---
         context.log.info("Starting Stage 1: Node Ingestion")
 
+        # 0. Countries
+        country_count = 0
+        # noinspection SqlNoDataSourceInspection
+        country_query = """
+        UNWIND $batch AS row
+        CREATE (:Country {
+            id: row.id, 
+            name: row.name
+        });
+        """
+        if not countries_df.is_empty():
+            for batch_df in countries_df.iter_slices(n_rows=batch_size):
+                batch_data = batch_df.to_dicts()
+                execute_cypher(driver, country_query, {"batch": batch_data})
+                country_count += len(batch_data)
+        context.log.info(f"Loaded {country_count} countries.")
+
         # 1. Genres
         genre_count = 0
         # noinspection SqlNoDataSourceInspection
@@ -83,8 +102,7 @@ def ingest_graph_db(
         CREATE (:Genre {
             id: row.id, 
             name: row.name, 
-            aliases: row.aliases,
-            parent_ids: row.parent_ids
+            aliases: row.aliases
         });
         """
         if not genres_df.is_empty():
@@ -103,11 +121,8 @@ def ingest_graph_db(
             id: row.id, 
             name: row.name,
             mbid: row.mbid,
-            country: row.country, 
             aliases: row.aliases,
-            tags: row.tags,
-            genres: row.genres,
-            similar_artists: row.similar_artists
+            tags: row.tags
         });
         """
         if not artists_df.is_empty():
@@ -125,8 +140,7 @@ def ingest_graph_db(
         CREATE (:Release {
             id: row.id, 
             title: row.title, 
-            year: row.year,
-            artist_id: row.artist_id
+            year: row.year
         });
         """
         if not releases_df.is_empty():
@@ -143,90 +157,106 @@ def ingest_graph_db(
         context.log.info("Starting Stage 3: Relationship Ingestion")
 
         # 1. Artist -> Genre
-        # noinspection SqlNoDataSourceInspection
-        execute_cypher_with_progress(
-            driver,
+        ag_df = artists_df.filter(pl.col("genres").is_not_null())
+        if not ag_df.is_empty():
+            ag_query = """
+            UNWIND $batch AS row
+            MATCH (a:Artist {id: row.id})
+            UNWIND row.genres AS gid
+            MATCH (g:Genre {id: gid})
+            MERGE (a)-[:PLAYS_GENRE]->(g)
             """
-            MATCH (a:Artist) WHERE a.genres IS NOT NULL
-            CALL (a) {
-                UNWIND a.genres AS gid
-                MATCH (g:Genre {id: gid})
-                MERGE (a)-[:PLAYS_GENRE]->(g)
-            } IN TRANSACTIONS OF 1000 ROWS;
-            """,
-            total_count=len(artists_df),
-            batch_size=1000,
-            description="Ingesting Artist -> Genre"
-        )
+            # Using smaller batch for relationships to be safe, though execute_cypher is auto-commit
+            # But here we use explicit batches in python loop.
+            for batch_df in ag_df.iter_slices(n_rows=1000):
+                batch_data = batch_df.select(["id", "genres"]).to_dicts()
+                execute_cypher(driver, ag_query, {"batch": batch_data})
+        context.log.info("Ingested Artist -> Genre relationships.")
 
         # 2. Artist -> Artist (SIMILAR_TO)
         # Matches against name OR aliases
-        # noinspection SqlNoDataSourceInspection
-        execute_cypher_with_progress(
-            driver,
+        aa_df = artists_df.filter(pl.col("similar_artists").is_not_null())
+        if not aa_df.is_empty():
+            aa_query = """
+            UNWIND $batch AS row
+            MATCH (a:Artist {id: row.id})
+            UNWIND row.similar_artists AS sim_name
+            MATCH (target:Artist)
+            WHERE (target.name = sim_name OR sim_name IN target.aliases)
+              AND a.id <> target.id
+            MERGE (a)-[:SIMILAR_TO]->(target)
             """
-            MATCH (a:Artist) WHERE a.similar_artists IS NOT NULL
-            CALL (a) {
-                UNWIND a.similar_artists AS sim_name
-                MATCH (target:Artist)
-                WHERE (target.name = sim_name OR sim_name IN target.aliases)
-                  AND a.id <> target.id
-                MERGE (a)-[:SIMILAR_TO]->(target)
-            } IN TRANSACTIONS OF 1000 ROWS;
-            """,
-            total_count=len(artists_df),
-            batch_size=1000,
-            description="Ingesting Artist -> Artist"
-        )
+            for batch_df in aa_df.iter_slices(n_rows=1000):
+                batch_data = batch_df.select(["id", "similar_artists"]).to_dicts()
+                execute_cypher(driver, aa_query, {"batch": batch_data})
+        context.log.info("Ingested Artist -> Artist relationships.")
 
         # 3. Release -> Artist
-        # noinspection SqlNoDataSourceInspection
-        execute_cypher_with_progress(
-            driver,
+        ra_df = releases_df.filter(pl.col("artist_id").is_not_null())
+        if not ra_df.is_empty():
+            ra_query = """
+            UNWIND $batch AS row
+            MATCH (rel:Release {id: row.id})
+            MATCH (art:Artist {id: row.artist_id})
+            MERGE (rel)-[:PERFORMED_BY]->(art)
             """
-            MATCH (rel:Release) WHERE rel.artist_id IS NOT NULL
-            CALL (rel) {
-                MATCH (art:Artist {id: rel.artist_id})
-                MERGE (rel)-[:PERFORMED_BY]->(art)
-            } IN TRANSACTIONS OF 1000 ROWS;
-            """,
-            total_count=len(releases_df),
-            batch_size=1000,
-            description="Ingesting Release -> Artist"
-        )
+            for batch_df in ra_df.iter_slices(n_rows=1000):
+                batch_data = batch_df.select(["id", "artist_id"]).to_dicts()
+                execute_cypher(driver, ra_query, {"batch": batch_data})
+        context.log.info("Ingested Release -> Artist relationships.")
 
         # 4. Genre -> Genre
-        # noinspection SqlNoDataSourceInspection
-        execute_cypher_with_progress(
-            driver,
+        gg_df = genres_df.filter(pl.col("parent_ids").is_not_null())
+        if not gg_df.is_empty():
+            gg_query = """
+            UNWIND $batch AS row
+            MATCH (g:Genre {id: row.id})
+            UNWIND row.parent_ids AS pid
+            MATCH (parent:Genre {id: pid})
+            WHERE g.id <> parent.id
+            MERGE (g)-[:SUBGENRE_OF]->(parent)
             """
-            MATCH (g:Genre) WHERE g.parent_ids IS NOT NULL
-            CALL (g) {
-                UNWIND g.parent_ids AS pid
-                MATCH (parent:Genre {id: pid})
-                WHERE g.id <> parent.id
-                MERGE (g)-[:SUBGENRE_OF]->(parent)
-            } IN TRANSACTIONS OF 1000 ROWS;
-            """,
-            total_count=len(genres_df),
-            batch_size=1000,
-            description="Ingesting Genre -> Genre"
-        )
+            for batch_df in gg_df.iter_slices(n_rows=1000):
+                batch_data = batch_df.select(["id", "parent_ids"]).to_dicts()
+                execute_cypher(driver, gg_query, {"batch": batch_data})
+        context.log.info("Ingested Genre -> Genre relationships.")
 
-        # --- Step 5: Cleanup ---
-        cleanup_queries = [
-            "MATCH (n:Artist) REMOVE n.genres, n.similar_artists;",
-            "MATCH (n:Release) REMOVE n.artist_id;",
-            "MATCH (n:Genre) REMOVE n.parent_ids;"
-        ]
-        for q in cleanup_queries:
-            execute_cypher(driver, q)
+        # 5. Genre -> Genre (Aliases)
+        ga_df = genres_df.filter(pl.col("aliases").is_not_null())
+        if not ga_df.is_empty():
+            ga_query = """
+            UNWIND $batch AS row
+            MATCH (source:Genre {id: row.id})
+            UNWIND row.aliases AS alias
+            MATCH (target:Genre {name: alias})
+            WHERE source.id <> target.id
+            MERGE (source)-[:RELATED_TO]->(target)
+            """
+            for batch_df in ga_df.iter_slices(n_rows=1000):
+                batch_data = batch_df.select(["id", "aliases"]).to_dicts()
+                execute_cypher(driver, ga_query, {"batch": batch_data})
+        context.log.info("Ingested Genre -> Genre (Aliases) relationships.")
 
-        # --- Step 6: Validation ---
+        # 6. Artist -> Country
+        ac_df = artists_df.filter(pl.col("country").is_not_null())
+        if not ac_df.is_empty():
+            ac_query = """
+            UNWIND $batch AS row
+            MATCH (a:Artist {id: row.id})
+            MATCH (c:Country {name: row.country})
+            MERGE (a)-[:FROM_COUNTRY]->(c)
+            """
+            for batch_df in ac_df.iter_slices(n_rows=1000):
+                batch_data = batch_df.select(["id", "country"]).to_dicts()
+                execute_cypher(driver, ac_query, {"batch": batch_data})
+        context.log.info("Ingested Artist -> Country relationships.")
+
+        # --- Step 5: Validation ---
         _validate_graph_counts(driver, context, {
             "Artist": len(artists_df),
             "Release": len(releases_df),
-            "Genre": len(genres_df)
+            "Genre": len(genres_df),
+            "Country": len(countries_df)
         })
 
     context.log.info("Graph population complete.")
@@ -235,12 +265,14 @@ def ingest_graph_db(
             "total_records_input": {
                 "genres": len(genres_df),
                 "artists": len(artists_df),
-                "releases": len(releases_df)
+                "releases": len(releases_df),
+                "countries": len(countries_df)
             },
             "nodes_ingested": {
                 "genres": genre_count,
                 "artists": artist_count,
-                "releases": release_count
+                "releases": release_count,
+                "countries": country_count
             },
             "status": "success"
         }

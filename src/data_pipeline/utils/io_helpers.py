@@ -80,14 +80,6 @@ async def async_write_text_file(path: Path, content: str) -> None:
     await asyncio.to_thread(write_text)
 
 
-async def async_clear_file(path: Path) -> None:
-    """
-    Deletes the file if it exists asynchronously.
-    """
-    if await asyncio.to_thread(path.exists):
-        await asyncio.to_thread(path.unlink)
-
-
 def generate_cache_key(text: str) -> str:
     """Creates a SHA256 hash of a string to use as a cache key."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -98,36 +90,3 @@ def decode_json(data: bytes) -> Any:
     Decodes JSON bytes using msgspec.
     """
     return msgspec.json.decode(data)
-
-
-async def async_append_jsonl(path: Path, items: list[Any]) -> None:
-    """
-    Appends a list of items as JSONL lines to a file asynchronously.
-    Filters out keys with None values (sparse JSON).
-    """
-    if not items:
-        return
-
-    await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
-
-    def write_lines():
-        with open(path, "ab") as f:
-            for item in items:
-                # Convert to dict if it's a struct/dataclass to allow filtering
-                if not isinstance(item, dict):
-                    try:
-                        d = msgspec.to_builtins(item)
-                    except TypeError:
-                        d = item
-                else:
-                    d = item
-
-                if isinstance(d, dict):
-                    cleaned = {k: v for k, v in d.items() if v is not None}
-                else:
-                    cleaned = d
-
-                f.write(msgspec.json.encode(cleaned))
-                f.write(b"\n")
-
-    await asyncio.to_thread(write_lines)

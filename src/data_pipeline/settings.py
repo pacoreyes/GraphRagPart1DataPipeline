@@ -170,8 +170,5 @@ class Settings(BaseSettings):
         extra="ignore"
     )
 
-    NOMIC_API_KEY: str = None
-    debug_mode: bool = False  # Default value
-
 
 settings = Settings()

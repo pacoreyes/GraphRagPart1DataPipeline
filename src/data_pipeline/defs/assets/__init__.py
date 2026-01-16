@@ -1,5 +1,6 @@
 from . import build_artist_index
 from . import extract_artists
+from . import extract_countries
 from . import extract_genres
 from . import extract_releases
 from . import extract_tracks

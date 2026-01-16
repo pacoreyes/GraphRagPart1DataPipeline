@@ -11,8 +11,6 @@ import polars as pl
 from dagster import AssetCheckResult, asset_check
 
 
-
-
 @asset_check(asset="artist_index")
 def check_artist_index_integrity(artist_index: pl.LazyFrame):
     """Checks that the artist index has no null IDs or names and no duplicates."""
@@ -119,6 +117,3 @@ def check_genres_quality(genres: pl.LazyFrame):
         passed=bool(null_names == 0),
         metadata={"null_names": null_names}
     )
-
-
-

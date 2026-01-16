@@ -12,7 +12,6 @@ from unittest.mock import MagicMock, patch, AsyncMock
 from pathlib import Path
 from data_pipeline.utils.wikipedia_helpers import async_fetch_wikipedia_article
 from data_pipeline.utils.network_helpers import HTTPError
-from data_pipeline.utils.data_transformation_helpers import clean_wikipedia_text
 
 @pytest.mark.asyncio
 async def test_async_fetch_wikipedia_article_cache_hit():
@@ -80,26 +79,3 @@ async def test_async_fetch_wikipedia_article_api_failure():
         result = await async_fetch_wikipedia_article(context, title, qid=qid, api_url=api_url, cache_dir=cache_dir)
         
         assert result is None
-
-def test_clean_wikipedia_text_removes_discography():
-    raw_text = """
-    Nick Warren is a DJ.
-    
-    == Biography ==
-    He was born in Bristol.
-    
-    == Discography ==
-    * Album 1
-    * Album 2
-    
-    == References ==
-    Ref 1
-    """
-    cleaned = clean_wikipedia_text(raw_text, exclusion_patterns=["Discography", "References"])
-    
-    assert "Nick Warren is a DJ." in cleaned
-    assert "== Biography ==" in cleaned
-    assert "He was born in Bristol." in cleaned
-    assert "== Discography ==" not in cleaned
-    assert "* Album 1" not in cleaned
-    assert "== References ==" not in cleaned

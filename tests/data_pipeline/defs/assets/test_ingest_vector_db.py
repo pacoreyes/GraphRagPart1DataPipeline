@@ -296,7 +296,7 @@ class TestIngestVectorDbAsset:
         result = ingest_vector_db(
             context,
             mock_chromadb_resource,
-            sample_articles_lazyframe,
+            sample_articles_lazyframe
         )
 
         assert isinstance(result, MaterializeResult)

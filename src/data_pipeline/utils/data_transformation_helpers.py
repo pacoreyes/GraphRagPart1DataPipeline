@@ -9,7 +9,7 @@
 
 import re
 import unicodedata
-from typing import Union, Optional, overload
+from typing import Union, Optional, overload, Sequence, Any
 
 import ftfy
 import polars as pl
@@ -21,31 +21,6 @@ def normalize_and_clean_text(text_or_expr: str) -> str: ...
 
 @overload
 def normalize_and_clean_text(text_or_expr: pl.Expr) -> pl.Expr: ...
-
-
-def clean_wikipedia_text(text: str, exclusion_patterns: Optional[list[str]] = None) -> str:
-    """
-    Generic Wikipedia text cleaner.
-    Truncates text at the first occurrence of any provided exclusion pattern.
-    """
-    if not text:
-        return ""
-
-    if exclusion_patterns:
-        # Create a combined regex pattern
-        # e.g. ^\s*==\s*(References|See also)\s*==
-        pattern_str = r"^\s*==\s*(" + "|".join(exclusion_patterns) + r")\s*=="
-        pattern = re.compile(pattern_str, re.MULTILINE | re.IGNORECASE)
-        
-        match = pattern.search(text)
-        if match:
-            text = text[:match.start()]
-
-    # Standard whitespace cleaning
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    text = text.strip()
-
-    return text
 
 
 def normalize_and_clean_text(text_or_expr: Union[str, pl.Expr]) -> Union[str, pl.Expr]:
@@ -123,3 +98,33 @@ def deduplicate_by_priority(
         lf = lf.unique(subset=[col], keep="first", maintain_order=True)
 
     return lf
+
+
+def format_list_natural_language(items: Optional[Sequence[Any]]) -> str:
+    """
+    Formats a list of strings into a natural language string with Oxford comma.
+    e.g. ['A', 'B', 'C'] -> "A, B, and C"
+         ['A', 'B'] -> "A and B"
+         ['A'] -> "A"
+    """
+    if not items:
+        return ""
+    
+    # Filter empty/None and unique-ify while preserving order
+    clean_items = []
+    seen = set()
+    for x in items:
+        if x and x not in seen:
+            clean_items.append(str(x))
+            seen.add(x)
+            
+    if not clean_items:
+        return ""
+        
+    if len(clean_items) == 1:
+        return clean_items[0]
+        
+    if len(clean_items) == 2:
+        return f"{clean_items[0]} and {clean_items[1]}"
+        
+    return f"{', '.join(clean_items[:-1])}, and {clean_items[-1]}"

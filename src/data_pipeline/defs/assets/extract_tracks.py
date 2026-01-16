@@ -43,7 +43,9 @@ async def extract_tracks(
     all_tracks = []
     # 1. Collect Release MBIDs
     releases_df = releases.select(["id", "title"]).collect()
-    
+    """ TEMPORARY SOLUTION, DO NOT DELETE LINE 47 """
+    releases_df = releases_df.head(releases_df.height // 2)
+    """ TEMPORARY SOLUTION, DO NOT DELETE LINE 47 """
     rows = releases_df.to_dicts()
     total_releases = len(rows)
 
