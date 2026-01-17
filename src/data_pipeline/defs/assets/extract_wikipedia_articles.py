@@ -54,7 +54,7 @@ async def extract_wikipedia_articles(
     # 1. Prepare Mappings
     genres_df = genres.collect()
     artist_index_df = artist_index.collect()
-    artists_df = artists.collect()
+    artists_df = artists.collect().unique(subset=["id"], keep="first", maintain_order=True)
 
     genres_map: dict[str, str] = {
         str(k): str(v) 

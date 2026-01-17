@@ -23,7 +23,7 @@ def main() -> None:
     # Configuration
     db_path = settings.VECTOR_DB_DIRPATH
     collection_name = settings.DEFAULT_COLLECTION_NAME
-    n_results = 5
+    n_results = 8
 
     print(f"Connecting to ChromaDB at {db_path}...")
     try:
@@ -62,10 +62,11 @@ def main() -> None:
                 continue
 
             print("\nResults (sorted by distance - lower is better):")
-            print("-" * 30)
+            print("-" * 60)
             
             # Iterate through the first query result list
             ids = results["ids"][0]
+
             metadatas = results["metadatas"][0] if results.get("metadatas") else [{}] * len(ids)
             distances = results["distances"][0] if results.get("distances") else ["N/A"] * len(ids)
             documents = results["documents"][0] if results.get("documents") else ["N/A"] * len(ids)
@@ -73,16 +74,23 @@ def main() -> None:
             for i, doc_id in enumerate(ids):
                 meta = metadatas[i] or {}
                 dist = distances[i]
-                snippet = documents[i][:200].replace("\n", " ") + "..."
+                snippet = documents[i][:500].replace("\n", " ") + "..."
 
                 print(f"Result {i + 1}:")
                 print(f"  - ID:       {doc_id}")
-                print(f"  - Title:    {meta.get('title', 'N/A')}")
-                print(f"  - Artist:   {meta.get('artist_name', 'N/A')}")
+                print(f"  - Chunk index: {meta['chunk_index']}  |  Total chunks: {meta['total_chunks']}")
                 print(f"  - Distance: {dist:.4f}" if isinstance(dist, float) else f"  - Distance: {dist}")
+                print(f"  - Title:    {meta['title']} | Artist:   {meta['artist_name']}")
+                print(f"  - Aliases:  {meta.get('aliases', 'N/A')}")
+                print(f"  - Similar:  {meta.get('similar_artists', 'N/A')}")
+                print(f"  - Genres:   {meta.get('genres', 'N/A')}")
+                print(f"  - Tags:     {meta.get('tags', 'N/A')}")
+                print(f"  - Country:  {meta.get('country', 'N/A')}")
+                print(f"  - Inception: {meta.get('inception_year', 'N/A')}")
+                print(f". - Wikipedia URL: {meta['wikipedia_url']}  |  WikiData: {meta['wikidata_uri']}")
                 print(f"  - Snippet:  {snippet}")
                 print("-" * 30)
-            print() # Extra newline for readability
+            print()  # Extra newline for readability
 
         except (KeyboardInterrupt, EOFError):
             print("\nExiting...")
