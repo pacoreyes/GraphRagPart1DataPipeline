@@ -48,11 +48,11 @@ def mock_neo4j_resource():
     # Cleanup
     _MOCK_DRIVER = None
 
-def test_ingest_graph_db_executes_related_to_query(mock_neo4j_resource):
+def test_ingest_graph_db_executes_plays_genre_query(mock_neo4j_resource):
     resource, mock_driver, mock_session = mock_neo4j_resource
 
     # Create dummy input data
-    artists_lf = pl.LazyFrame({"id": ["A1"], "name": ["Artist1"], "mbid": ["m1"], "country": ["US"], "aliases": [None], "tags": [None], "genres": [None], "similar_artists": [None]})
+    artists_lf = pl.LazyFrame({"id": ["A1"], "name": ["Artist1"], "mbid": ["m1"], "country": ["US"], "aliases": [None], "tags": [None], "genres": [["G1"]], "similar_artists": [None]})
     releases_lf = pl.LazyFrame({"id": ["R1"], "title": ["Album1"], "year": [2020], "artist_id": ["A1"]})
     tracks_lf = pl.LazyFrame({"id": ["T1", "T2"], "title": ["Track1", "Track2"], "album_id": ["R1", "R1"]})
     genres_lf = pl.LazyFrame({"id": ["G1"], "name": ["Rock"], "aliases": [["Hard Rock"]], "parent_ids": [None]})
@@ -71,8 +71,8 @@ def test_ingest_graph_db_executes_related_to_query(mock_neo4j_resource):
     session_write_calls = mock_session.execute_write.call_args_list
     # driver_calls = mock_driver.execute_query.call_args_list
     
-    found_related_to_query = False
-    expected_snippet = "MERGE (source)-[:RELATED_TO]->(target)"
+    found_plays_genre_query = False
+    expected_snippet = "MERGE (a)-[:PLAYS_GENRE]->(g)"
     
     # Helper to check a query string
     def check_query(q):
@@ -89,16 +89,16 @@ def test_ingest_graph_db_executes_related_to_query(mock_neo4j_resource):
              query_arg = c.kwargs['query']
         
         if check_query(query_arg):
-            found_related_to_query = True
+            found_plays_genre_query = True
             break
             
     # Check session.execute_write calls (args[1] is query)
-    if not found_related_to_query:
+    if not found_plays_genre_query:
         for c in session_write_calls:
             # execute_write(work_fn, query, params)
             if len(c.args) >= 2:
                 if check_query(c.args[1]):
-                    found_related_to_query = True
+                    found_plays_genre_query = True
                     break
             
-    assert found_related_to_query, "The 'RELATED_TO' Cypher query was not executed."
+    assert found_plays_genre_query, "The 'PLAYS_GENRE' Cypher query was not executed."

@@ -35,6 +35,10 @@ def _create_indexes(driver: Driver, context: AssetExecutionContext) -> None:
         "CREATE INDEX genre_name_idx IF NOT EXISTS FOR (n:Genre) ON (n.name)",
         "CREATE INDEX country_id_idx IF NOT EXISTS FOR (n:Country) ON (n.id)",
         "CREATE INDEX country_name_idx IF NOT EXISTS FOR (n:Country) ON (n.name)",
+        # Fulltext Indexes
+        "CREATE FULLTEXT INDEX artist_fulltext_idx IF NOT EXISTS FOR (n:Artist) ON EACH [n.name, n.aliases]",
+        "CREATE FULLTEXT INDEX genre_fulltext_idx IF NOT EXISTS FOR (n:Genre) ON EACH [n.name, n.aliases]",
+        "CREATE FULLTEXT INDEX release_fulltext_idx IF NOT EXISTS FOR (n:Release) ON EACH [n.title, n.tracks]",
     ]
 
     for cmd in index_commands:
@@ -153,8 +157,7 @@ def ingest_graph_db(
             id: row.id, 
             name: row.name,
             mbid: row.mbid,
-            aliases: row.aliases,
-            tags: row.tags
+            aliases: row.aliases
         });
         """
         if not artists_df.is_empty():
@@ -254,23 +257,7 @@ def ingest_graph_db(
                 execute_cypher(driver, gg_query, {"batch": batch_data})
         context.log.info("Ingested Genre -> Genre relationships.")
 
-        # 5. Genre -> Genre (Aliases)
-        ga_df = genres_df.filter(pl.col("aliases").is_not_null())
-        if not ga_df.is_empty():
-            ga_query = """
-            UNWIND $batch AS row
-            MATCH (source:Genre {id: row.id})
-            UNWIND row.aliases AS alias
-            MATCH (target:Genre {name: alias})
-            WHERE source.id <> target.id
-            MERGE (source)-[:RELATED_TO]->(target)
-            """
-            for batch_df in ga_df.iter_slices(n_rows=1000):
-                batch_data = batch_df.select(["id", "aliases"]).to_dicts()
-                execute_cypher(driver, ga_query, {"batch": batch_data})
-        context.log.info("Ingested Genre -> Genre (Aliases) relationships.")
-
-        # 6. Artist -> Country
+        # 5. Artist -> Country
         ac_df = artists_df.filter(pl.col("country").is_not_null())
         if not ac_df.is_empty():
             ac_query = """

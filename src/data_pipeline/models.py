@@ -18,13 +18,13 @@ class Artist(msgspec.Struct, kw_only=True, omit_defaults=True):
     Represents a musical artist or group extracted from Wikidata.
     """
     id: str
-    name: str
+    name: str  # Indexed in graph database
     mbid: str
-    country: str  # Drop after ingesting in graph
-    aliases: Optional[list[str]] = None
-    genres: Optional[list[str]] = None  # Drop after ingesting in graph
-    tags: Optional[list[str]] = None
-    similar_artists: Optional[list[str]] = None  # Drop after ingesting in graph
+    country: str  # Drop after creating relation FROM_COUNTRY in graph database
+    aliases: Optional[list[str]] = None  # Indexed in graph database
+    genres: Optional[list[str]] = None  # Drop after creating relation PLAYS_GENRE in graph database
+    tags: Optional[list[str]] = None  # Important for vector database
+    similar_artists: Optional[list[str]] = None  # Drop after creating relation SIMILAR_TO in graph database
 
 
 class Genre(msgspec.Struct, kw_only=True, omit_defaults=True):
@@ -33,8 +33,8 @@ class Genre(msgspec.Struct, kw_only=True, omit_defaults=True):
     """
     id: str
     name: str
-    aliases: Optional[list[str]] = None
-    parent_ids: Optional[list[str]] = None  # Drop after ingesting in graph
+    aliases: Optional[list[str]] = None  # Indexed in graph database
+    parent_ids: Optional[list[str]] = None  # Drop after creating relation SUBGENRE_OF in graph database
 
 
 class Release(msgspec.Struct, kw_only=True, omit_defaults=True):
@@ -44,7 +44,7 @@ class Release(msgspec.Struct, kw_only=True, omit_defaults=True):
     id: str
     title: str
     year: Optional[int] = None
-    artist_id: str  # Drop after ingesting in graph
+    artist_id: str  # Drop after creating relation PERFORMED_BY in graph database
 
 
 class Track(msgspec.Struct, kw_only=True, omit_defaults=True):
@@ -53,7 +53,7 @@ class Track(msgspec.Struct, kw_only=True, omit_defaults=True):
     """
     id: str
     title: str
-    album_id: str  # Drop after ingesting in graph (embedded in Release node)
+    album_id: str  # Drop after ingesting in graph (embedded as list in Release node, also indexed in graph database)
 
 
 class Country(msgspec.Struct, kw_only=True, omit_defaults=True):
