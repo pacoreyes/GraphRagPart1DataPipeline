@@ -1,6 +1,6 @@
 # GraphRAG - Part 1: Data Pipeline
 
-*Last update: January 14, 2026*
+*Last update: January 18, 2026*
 
 This repo is part of a larger project **GraphRAG** app, in which I show how the GraphRAG pattern works.
 
@@ -37,8 +37,9 @@ We leverage **Polars** for high-performance data transformation, **Pydantic** fo
 - **Databases:** [Neo4j](https://neo4j.com/) (Graph), [ChromaDB](https://www.trychroma.com/) (Vector)
 - **Data Engineering:** [Polars](https://pola.rs/) (manipulation), [Msgspec](https://github.com/jcrist/msgspec) (serialization), [Ftfy](https://github.com/rspeer/python-ftfy) (cleaning)
 - **Data Validation & Config:** [Pydantic](https://pydantic.dev/), [Pydantic Settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/)
-- **AI & ML:** [PyTorch](https://pytorch.org/), [Transformers](https://huggingface.co/docs/transformers/index), [Nomic](https://atlas.nomic.ai/) (Embeddings), [LangChain](https://www.langchain.com/) (Text Splitters), [Einops](https://einops.rocks/)
+- **AI & ML:** [PyTorch](https://pytorch.org/), [Transformers](https://huggingface.co/docs/transformers/index), [Sentence Transformers](https://www.sbert.net/), [Nomic](https://atlas.nomic.ai/) (Embeddings), [LangChain](https://www.langchain.com/) (Text Splitters), [Einops](https://einops.rocks/)
 - **Networking & Utils:** [curl-cffi](https://github.com/yifeikong/curl_cffi) (Async HTTP with browser impersonation), [Structlog](https://www.structlog.org/), [Tqdm](https://tqdm.github.io/)
+- **Cloud:** [Dagster GCP](https://docs.dagster.io/integrations/gcp) (Google Cloud Platform integration)
 - **Language & Tooling:** [Python 3.13+](https://www.python.org/), [uv](https://docs.astral.sh/uv/), [Ruff](https://docs.astral.sh/ruff/), [Ty](https://github.com/astral-sh/ty), [Bandit](https://bandit.readthedocs.io/)
 
 ---
@@ -77,17 +78,21 @@ This project implements a **strict separation of concerns** following Dagster's 
 │  ┌────────────────────────────┼────────────────────────┤                    │
 │  │                            ▼                        ▼                    │
 │  │  ┌──────────────────┐  ┌────────────────┐  ┌─────────────────────┐       │
-│  │  │ extract_genres   │  │ extract_tracks │  │ extract_wikipedia   │       │
-│  │  │ .py              │  │ .py            │  │ _articles.py        │       │
+│  │  │ extract_genres   │  │ extract_tracks │  │ extract_countries   │       │
+│  │  │ .py              │  │ .py            │  │ .py                 │       │
 │  │  └──────────────────┘  └────────────────┘  └─────────────────────┘       │
-│  │                                                      │                   │
-│  │  ┌───────────────────────────────────────────────────┼───────────────┐   │
-│  │  │                                                   ▼               │   │
-│  │  │  ┌───────────────────┐              ┌───────────────────┐        │   │
-│  │  │  │  ingest_graph_db  │              │  ingest_vector_db │        │   │
-│  │  │  │  .py (Neo4j)      │              │  .py (ChromaDB)   │        │   │
-│  │  │  └───────────────────┘              └───────────────────┘        │   │
-│  │  └──────────────────────────────────────────────────────────────────┘   │
+│  │                                                                          │
+│  │  ┌────────────────────────────────────────────────────────────────────┐  │
+│  │  │  ┌─────────────────────┐                 ┌───────────────────┐     │  │
+│  │  │  │ extract_wikipedia   │                 │  ingest_vector_db │     │  │
+│  │  │  │ _articles.py        │────────────────▶│  .py (ChromaDB)   │     │  │
+│  │  │  └─────────────────────┘                 └───────────────────┘     │  │
+│  │  │                                                                    │  │
+│  │  │  ┌───────────────────┐                                             │  │
+│  │  │  │  ingest_graph_db  │◀── artists, releases, tracks,              │  │
+│  │  │  │  .py (Neo4j)      │    genres, countries                       │  │
+│  │  │  └───────────────────┘                                             │  │
+│  │  └────────────────────────────────────────────────────────────────────┘  │
 │  └──────────────────────────────────────────────────────────────────────────│
 └──────────────────────────────────────────────────────────────────────────────┘
                                     │
@@ -234,27 +239,28 @@ graph TD
         D --> E[extract_releases]
         E --> F[extract_tracks]
         D --> G[extract_genres]
+        D --> H[extract_countries]
     end
 
     subgraph "Stage 3: Knowledge Graph"
-        D & E & G --> H[ingest_graph_db]
-        H -->|Nodes & Relationships| I[(Neo4j Aura)]
+        D & E & F & G & H --> I[ingest_graph_db]
+        I -->|Nodes & Relationships| J[(Neo4j Aura)]
     end
 
     subgraph "Stage 4: RAG Preparation"
-        D -->|Wikipedia URLs| J[extract_wikipedia_articles]
-        J -->|Clean & Chunk| K[Text Splitter]
-        K -->|Enrich Metadata| L[wikipedia_articles.jsonl]
+        D -->|Wikipedia URLs| K[extract_wikipedia_articles]
+        K -->|Clean & Chunk| L[Text Splitter]
+        L -->|Enrich Metadata| M[wikipedia_articles.jsonl]
     end
 
     subgraph "Stage 5: Vector Ingestion"
-        L -->|Nomic Embeddings| M[ingest_vector_db]
-        M -->|Upsert| N[(ChromaDB)]
+        M -->|Nomic Embeddings| N[ingest_vector_db]
+        N -->|Upsert| O[(ChromaDB)]
     end
 
     style A fill:#e1f5fe
-    style I fill:#c8e6c9
-    style N fill:#fff3e0
+    style J fill:#c8e6c9
+    style O fill:#fff3e0
 ```
 
 ### Asset Dependency Graph
@@ -267,9 +273,10 @@ graph TD
 | `genres` | `artists` | `pl.LazyFrame` | Parquet |
 | `releases` | `artists` | `list[Release]` | Parquet |
 | `tracks` | `releases` | `list[Track]` | Parquet |
+| `countries` | `artists` | `list[Country]` | Parquet |
 | `wikipedia_articles` | `artists`, `genres`, `artist_index` | `list[list[Article]]` | JSONL |
-| `ingest_graph_db` | `artists`, `releases`, `genres` | `MaterializeResult` | None (sink) |
-| `ingest_vector_db` | `wikipedia_articles` | `MaterializeResult` | None (sink) |
+| `graph_db` | `artists`, `releases`, `tracks`, `genres`, `countries` | `MaterializeResult` | None (sink) |
+| `vector_db` | `wikipedia_articles` | `MaterializeResult` | None (sink) |
 
 ### Partitioning Strategy
 
@@ -322,6 +329,7 @@ We construct a deterministic Knowledge Graph to map the relationships between th
 erDiagram
     Artist ||--o{ Genre : PLAYS_GENRE
     Artist ||--o{ Artist : SIMILAR_TO
+    Artist ||--o| Country : FROM_COUNTRY
     Release ||--|| Artist : PERFORMED_BY
     Genre ||--o{ Genre : SUBGENRE_OF
 
@@ -329,36 +337,41 @@ erDiagram
         string id
         string name
         string mbid
-        string country
         string_list aliases
-        string_list tags
     }
     Release {
         string id
         string title
         int year
+        string_list tracks
     }
     Genre {
         string id
         string name
         string_list aliases
     }
+    Country {
+        string id
+        string name
+    }
 ```
 
 #### Nodes (Entities)
 - **Artist:** The core entity (e.g., "Daft Punk").
-- **Release:** Major releases (Albums/Singles) linked to artists.
+- **Release:** Major releases (Albums/Singles) linked to artists. Contains embedded track list as a property.
 - **Genre:** A hierarchical taxonomy of musical styles (e.g., "French House" -> "House" -> "Electronic").
+- **Country:** Geographic entities representing artist origin (e.g., "France", "Germany").
 
 #### Edges (Relationships)
 - `(Artist)-[:PLAYS_GENRE]->(Genre)`
 - `(Artist)-[:SIMILAR_TO]->(Artist)`: Derived from Last.fm community data.
+- `(Artist)-[:FROM_COUNTRY]->(Country)`: Artist's country of origin.
 - `(Release)-[:PERFORMED_BY]->(Artist)`
 - `(Genre)-[:SUBGENRE_OF]->(Genre)`: Enables hierarchical graph traversal.
 
 **Dataset Statistics:**
 - **Articles:** ~4,679 processed.
-- **Nodes:** ~47,584 (Artists, Releases, Genres).
+- **Nodes:** ~47,584 (Artists, Releases, Genres, Countries).
 - **Edges:** ~88,828.
 
 ### 3. Vector Database (ChromaDB)
@@ -466,6 +479,21 @@ def _execute_with_retry(driver, query, max_retries=3, base_delay=2.0):
                 raise
 ```
 
+### Tracks Embedded in Releases
+
+Instead of creating separate `Track` nodes, the pipeline embeds track information directly into `Release` nodes as a list property. This design reduces graph complexity while preserving track order:
+
+```python
+# Tracks are formatted with position prefix: "1. Track Title", "2. Another Track"
+# Stored as Release.tracks property in Neo4j
+tracks_property = ["1. Welcome to the Pleasuredome", "2. War", "3. Two Tribes"]
+```
+
+**Benefits:**
+- Reduces node count and relationship overhead
+- Maintains track ordering naturally
+- Enables fulltext search across release titles and track names via Neo4j fulltext indexes
+
 ### Caching Strategy
 
 Multi-level caching reduces API calls and enables resumable runs:
@@ -474,7 +502,8 @@ Multi-level caching reduces API calls and enables resumable runs:
 |-------------|----------|--------|---------|
 | Wikidata entities | `.cache/wikidata/{qid}.json` | JSON | Entity metadata |
 | Wikipedia articles | `.cache/wikipedia/{qid}.txt` | Plain text | Article content |
-| MusicBrainz releases | `.cache/musicbrainz/{mbid}_release.json` | JSON | Release groups |
+| MusicBrainz releases | `.cache/musicbrainz/{mbid}_releases.json` | JSON | Release groups |
+| MusicBrainz tracks | `.cache/musicbrainz/{mbid}_tracks.json` | JSON | Track listings |
 | Last.fm data | `.cache/last_fm/{hash}.json` | JSON | Tags, similar artists |
 
 ---
@@ -492,6 +521,7 @@ graph_rag_data_pipeline_1/
 │       │   ├── assets/             # Business logic layer
 │       │   │   ├── build_artist_index.py
 │       │   │   ├── extract_artists.py
+│       │   │   ├── extract_countries.py
 │       │   │   ├── extract_genres.py
 │       │   │   ├── extract_releases.py
 │       │   │   ├── extract_tracks.py
