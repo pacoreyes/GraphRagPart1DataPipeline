@@ -30,7 +30,7 @@ def _prepare_chroma_metadata(row: dict[str, Any]) -> dict[str, Any]:
     """
     Prepares metadata for ChromaDB from an article row.
     Handles sparse data by excluding empty/null values.
-    
+
     Args:
         row: Dictionary containing article data with 'metadata' field.
 
@@ -40,35 +40,24 @@ def _prepare_chroma_metadata(row: dict[str, Any]) -> dict[str, Any]:
     metadata = row.get("metadata") or {}
 
     result = {
-        "title": metadata.get("title") or "",
-        "artist_name": metadata.get("artist_name") or "",
-        "country": metadata.get("country") or "Unknown",
-        "wikipedia_url": metadata.get("wikipedia_url") or "",
-        "wikidata_uri": metadata.get("wikidata_uri") or "",
-    }
+        # guarantied fields
+        "title": metadata["title"],
+        "artist_name": metadata["artist_name"],
+        "country": metadata["country"],
+        "wikipedia_url": metadata["wikipedia_url"],
+        "wikidata_uri": metadata["wikidata_uri"],
+        "chunk_index": metadata["chunk_index"],
+        "total_chunks": metadata["total_chunks"],
 
+        # optional fields
+        "aliases": ", ".join(metadata.get("aliases") or []),
+        "tags": ", ".join(metadata.get("tags") or []),
+        "similar_artists": ", ".join(metadata.get("similar_artists") or []),
+        "genres": ", ".join(metadata.get("genres") or []),
+    }
+    # omit empty scalar fields
     if metadata.get("inception_year"):
         result["inception_year"] = metadata["inception_year"]
-
-    if metadata.get("chunk_index"):
-        result["chunk_index"] = metadata["chunk_index"]
-
-    if metadata.get("total_chunks"):
-        result["total_chunks"] = metadata["total_chunks"]
-
-    if metadata.get("aliases"):
-        result["aliases"] = ", ".join(str(a) for a in metadata["aliases"])
-
-    if metadata.get("tags"):
-        result["tags"] = ", ".join(str(t) for t in metadata["tags"])
-
-    if metadata.get("similar_artists"):
-        result["similar_artists"] = ", ".join(
-            str(s) for s in metadata["similar_artists"]
-        )
-
-    if metadata.get("genres"):
-        result["genres"] = ", ".join(str(g) for g in metadata["genres"])
 
     return result
 

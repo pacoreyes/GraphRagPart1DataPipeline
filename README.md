@@ -1,6 +1,6 @@
 # GraphRAG - Part 1: Data Pipeline
 
-*Last update: January 18, 2026*
+*Last update: January 19, 2026*
 
 This repo is part of a larger project **GraphRAG** app, in which I show how the GraphRAG pattern works.
 
@@ -10,7 +10,8 @@ Part 1 is a basic Data Pipeline made with **Dagster**, which orchestrates the da
 
 This pipeline is specifically tuned for the **Electronic Music** domain. It captures the rich, interconnected history of electronic artists, from early pioneers to contemporary producers. The dataset encompasses a wide range of sub-genres—including Techno, House, Ambient, IDM, and Drum & Bass—modeling the complex relationships between artists, their releases, and the evolving taxonomy of electronic musical styles.
 
-![Knowledge Graph in Neo4j Aura](docs/neo4j_query_depeche_mode_similar_artists_and_genres.png)
+![Knowledge Graph in Neo4j Aura](docs/neo4j_artist_graph_query_and_modelling.png)
+Figure 1. Artist Depeche Mode, visualization of graph query and modelling.
 
 ## About the Project
 
@@ -23,7 +24,6 @@ This data pipeline orchestrates data ingestion from multiple sources to build a 
 * **unstructured Data**
   - **Wikipedia API** (Articles about Artists and Genres)
 
-
 The goal is to prepare unstructured data (Wikipedia articles of musicians, bands, and artists) and split it into chunks enriched with structured metadata. This prepares the data for a hybrid search approach:
 
 1.  **Semantic Search:** Preparing text chunks for vectorization.
@@ -35,12 +35,13 @@ We leverage **Polars** for high-performance data transformation, **Pydantic** fo
 
 - **Orchestration:** [Dagster](https://dagster.io/) (Assets, Resources, Partitions, Asset Checks, I/O Managers)
 - **Databases:** [Neo4j](https://neo4j.com/) (Graph), [ChromaDB](https://www.trychroma.com/) (Vector)
-- **Data Engineering:** [Polars](https://pola.rs/) (manipulation), [Msgspec](https://github.com/jcrist/msgspec) (serialization), [Ftfy](https://github.com/rspeer/python-ftfy) (cleaning)
+- **Data Engineering:** [Polars](https://pola.rs/) (manipulation), [Msgspec](https://github.com/jcrist/msgspec) (serialization), [Ftfy](https://github.com/rspeer/python-ftfy) (text cleaning)
 - **Data Validation & Config:** [Pydantic](https://pydantic.dev/), [Pydantic Settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/)
 - **AI & ML:** [PyTorch](https://pytorch.org/), [Transformers](https://huggingface.co/docs/transformers/index), [Sentence Transformers](https://www.sbert.net/), [Nomic](https://atlas.nomic.ai/) (Embeddings), [LangChain](https://www.langchain.com/) (Text Splitters), [Einops](https://einops.rocks/)
 - **Networking & Utils:** [curl-cffi](https://github.com/yifeikong/curl_cffi) (Async HTTP with browser impersonation), [Structlog](https://www.structlog.org/), [Tqdm](https://tqdm.github.io/)
 - **Cloud:** [Dagster GCP](https://docs.dagster.io/integrations/gcp) (Google Cloud Platform integration)
-- **Language & Tooling:** [Python 3.13+](https://www.python.org/), [uv](https://docs.astral.sh/uv/), [Ruff](https://docs.astral.sh/ruff/), [Ty](https://github.com/astral-sh/ty), [Bandit](https://bandit.readthedocs.io/)
+- **Language:** [Python 3.13+](https://www.python.org/)
+- **Tooling and Testing:** [uv](https://docs.astral.sh/uv/), [Ruff](https://docs.astral.sh/ruff/), [Ty](https://github.com/astral-sh/ty), [Bandit](https://bandit.readthedocs.io/)
 
 ---
 
@@ -54,29 +55,29 @@ This project implements a **strict separation of concerns** following Dagster's 
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │                         DAGSTER DEFINITIONS LAYER                            │
 │                    "The How" - Infrastructure & Configuration                │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────────┐  │
-│  │  definitions.py │  │   resources.py  │  │     io_managers.py          │  │
-│  │  (Entry Point)  │  │ (Factories/DI)  │  │ (Parquet/JSONL Persistence) │  │
-│  └────────┬────────┘  └────────┬────────┘  └────────────┬────────────────┘  │
-│           │                    │                        │                   │
-│  ┌────────┴────────┐  ┌────────┴────────┐  ┌───────────┴───────────┐       │
-│  │   checks.py     │  │  partitions.py  │  │    settings.py        │       │
-│  │ (Quality Gates) │  │  (By Decade)    │  │ (pydantic-settings)   │       │
-│  └─────────────────┘  └─────────────────┘  └───────────────────────┘       │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────────┐   │
+│  │  definitions.py │  │   resources.py  │  │     io_managers.py          │   │
+│  │  (Entry Point)  │  │ (Factories/DI)  │  │ (Parquet/JSONL Persistence) │   │
+│  └────────┬────────┘  └────────┬────────┘  └────────────┬────────────────┘   │
+│           │                    │                        │                    │
+│  ┌────────┴────────┐  ┌────────┴────────┐  ┌────────────┴──────────┐         │
+│  │   checks.py     │  │  partitions.py  │  │    settings.py        │         │
+│  │ (Quality Gates) │  │  (By Decade)    │  │ (pydantic-settings)   │         │
+│  └─────────────────┘  └─────────────────┘  └───────────────────────┘         │
 └──────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                          ASSET LAYER (defs/assets/)                          │
-│                   "The What" - Business Logic & Transformation               │
-│  ┌────────────────┐  ┌──────────────────┐  ┌────────────────────────┐       │
-│  │ build_artist   │  │  extract_artists │  │  extract_releases      │       │
-│  │ _index.py      │──▶│  .py             │──▶│  .py                   │       │
-│  │ (Wikidata)     │  │  (Wikidata+Last) │  │  (MusicBrainz)         │       │
-│  └────────────────┘  └────────┬─────────┘  └───────────┬────────────┘       │
-│                               │                        │                    │
-│  ┌────────────────────────────┼────────────────────────┤                    │
-│  │                            ▼                        ▼                    │
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          ASSET LAYER (defs/assets/)                         │
+│                   "The What" - Business Logic & Transformation              │
+│  ┌────────────────┐   ┌──────────────────┐   ┌───────────────────────┐      │
+│  │ build_artist   │   │  extract_artists │   │  extract_releases     │      │
+│  │ _index.py      │──▶│  .py             │──▶│  .py                  │      │
+│  │ (Wikidata)     │   │  (Wikidata+Last) │   │  (MusicBrainz)        │      │
+│  └────────────────┘   └────────┬─────────┘   └───────────┬───────────┘      │
+│                                │                         │                  │
+│  ┌─────────────────────────────┼─────────────────────────┤                  │
+│  │                             ▼                         ▼                  │
 │  │  ┌──────────────────┐  ┌────────────────┐  ┌─────────────────────┐       │
 │  │  │ extract_genres   │  │ extract_tracks │  │ extract_countries   │       │
 │  │  │ .py              │  │ .py            │  │ .py                 │       │
@@ -89,47 +90,48 @@ This project implements a **strict separation of concerns** following Dagster's 
 │  │  │  └─────────────────────┘                 └───────────────────┘     │  │
 │  │  │                                                                    │  │
 │  │  │  ┌───────────────────┐                                             │  │
-│  │  │  │  ingest_graph_db  │◀── artists, releases, tracks,              │  │
-│  │  │  │  .py (Neo4j)      │    genres, countries                       │  │
+│  │  │  │  ingest_graph_db  │◀── artists, releases, tracks,               │  │
+│  │  │  │  .py (Neo4j)      │    genres, countries                        │  │
 │  │  │  └───────────────────┘                                             │  │
 │  │  └────────────────────────────────────────────────────────────────────┘  │
 │  └──────────────────────────────────────────────────────────────────────────│
-└──────────────────────────────────────────────────────────────────────────────┘
+└─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                         UTILITIES LAYER (utils/)                             │
-│                   Domain-Agnostic, Reusable Components                       │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │                    NETWORK & I/O PRIMITIVES                         │    │
-│  │  ┌─────────────────────┐  ┌────────────────────────────────────┐   │    │
-│  │  │  network_helpers.py │  │      io_helpers.py                 │   │    │
-│  │  │  (HTTP retries,     │  │  (JSON/text files,                 │   │    │
-│  │  │   concurrency)      │  │   cache key generation)            │   │    │
-│  │  └─────────────────────┘  └────────────────────────────────────┘   │    │
-│  └─────────────────────────────────────────────────────────────────────┘    │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │                      DOMAIN ADAPTERS (API Clients)                  │    │
-│  │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐     │    │
-│  │  │ wikidata_       │  │ musicbrainz_    │  │ lastfm_         │     │    │
-│  │  │ helpers.py      │  │ helpers.py      │  │ helpers.py      │     │    │
-│  │  └─────────────────┘  └─────────────────┘  └─────────────────┘     │    │
-│  │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐     │    │
-│  │  │ wikipedia_      │  │ neo4j_          │  │ chroma_         │     │    │
-│  │  │ helpers.py      │  │ helpers.py      │  │ helpers.py      │     │    │
-│  │  └─────────────────┘  └─────────────────┘  └─────────────────┘     │    │
-│  └─────────────────────────────────────────────────────────────────────┘    │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │                     DATA TRANSFORMATION                              │    │
-│  │  ┌───────────────────────────────────────────────────────────────┐  │    │
-│  │  │  data_transformation_helpers.py                                │  │    │
-│  │  │  (Text normalization, deduplication, Unicode fixing)           │  │    │
-│  │  └───────────────────────────────────────────────────────────────┘  │    │
-│  └─────────────────────────────────────────────────────────────────────┘    │
-└──────────────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│                         UTILITIES LAYER (utils/)                          │
+│                   Domain-Agnostic, Reusable Components                    │
+│  ┌────────────────────────────────────────────────────────────────────┐   │
+│  │                    NETWORK & I/O PRIMITIVES                        │   │
+│  │  ┌─────────────────────┐  ┌────────────────────────────────────┐   │   │
+│  │  │  network_helpers.py │  │      io_helpers.py                 │   │   │
+│  │  │  (HTTP retries,     │  │  (JSON/text files,                 │   │   │
+│  │  │   concurrency)      │  │   cache key generation)            │   │   │
+│  │  └─────────────────────┘  └────────────────────────────────────┘   │   │
+│  └────────────────────────────────────────────────────────────────────┘   │
+│  ┌────────────────────────────────────────────────────────────────────┐   │
+│  │                      DOMAIN ADAPTERS (API Clients)                 │   │
+│  │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐     │   │
+│  │  │ wikidata_       │  │ musicbrainz_    │  │ lastfm_         │     │   │
+│  │  │ helpers.py      │  │ helpers.py      │  │ helpers.py      │     │   │
+│  │  └─────────────────┘  └─────────────────┘  └─────────────────┘     │   │
+│  │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐     │   │
+│  │  │ wikipedia_      │  │ neo4j_          │  │ chroma_         │     │   │
+│  │  │ helpers.py      │  │ helpers.py      │  │ helpers.py      │     │   │
+│  │  └─────────────────┘  └─────────────────┘  └─────────────────┘     │   │
+│  └────────────────────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────────────────────┐  │
+│  │                     DATA TRANSFORMATION                             │  │
+│  │  ┌───────────────────────────────────────────────────────────────┐  │  │
+│  │  │  data_transformation_helpers.py                               │  │  │
+│  │  │  (Text normalization, deduplication, Unicode fixing)          │  │  │
+│  │  └───────────────────────────────────────────────────────────────┘  │  │
+│  └─────────────────────────────────────────────────────────────────────┘  │
+└───────────────────────────────────────────────────────────────────────────┘
 ```
 
-![Panel of Neo4j Aura](docs/dagster_lineage.png)
+![Dagster Assets Catalog](docs/dagster_assets_catalog.png)
+Figure 2. Dagster Assets Catalog, showing the Data Pipeline with all Assets materialized.
 
 ## Separation of Concerns
 
@@ -184,8 +186,8 @@ Contains **domain-agnostic, reusable helpers** that can be used across different
 | `neo4j_helpers.py` | Generic Cypher execution with retry logic | `execute_cypher()`, `clear_database()` |
 | `chroma_helpers.py` | ChromaDB embedding utilities | `NomicEmbeddingFunction`, `get_device()`, `generate_doc_id()` |
 
-**Design Rules for Utils (CLAUDE.md Compliance):**
-- **No global config**: Utils never import `settings` directly — configuration is passed as arguments
+**Design Rules for Utils:**
+- **No global config**: Utils never import `settings.py` directly — configuration is passed as arguments
 - **Dependency injection**: API keys, paths, URLs, timeouts passed as function parameters
 - **No domain logic**: Schema definitions (like Neo4j indexes) belong in assets, not utils
 - **100% reusable**: All helpers can be used across different projects without modification
@@ -225,7 +227,8 @@ The pipeline transforms raw data from external APIs into two optimized formats: 
 
 ### Pipeline Flow
 
-![Panel of Assets in Dagster](docs/dagster_Assets.png)
+![Dagster Assets Lineage](docs/dagster_pipeline_assets_lineage.png)
+Figure 3. Dagster Assets Lineage, showing the Data Pipeline components and dependencies.
 
 ```mermaid
 graph TD
@@ -370,11 +373,33 @@ erDiagram
 - `(Genre)-[:SUBGENRE_OF]->(Genre)`: Enables hierarchical graph traversal.
 
 **Dataset Statistics:**
-- **Articles:** ~4,679 processed.
-- **Nodes:** ~47,584 (Artists, Releases, Genres, Countries).
-- **Edges:** ~88,828.
+- **Articles:** 4,679 processed.
+    - 29,979 chunks (documents)
+- **Nodes:** 98,677.
+    - 112 countries
+    - 754 genres
+    - 4679 artists
+    - 93,132 Releases
+- **Edges:** 123,527.
 
 ### 3. Vector Database (ChromaDB)
+
+#### Vector Schema
+
+* Article: Raw text enriched with context from flattened metadata
+* Metadata
+- * title: str
+- * artist_name: str
+- * aliases: list 
+- * tags: list (optional)
+- * similar_artists: list (optional)
+- * genres: list (optional)
+- * inception_year: int (optional)
+- * country: str
+- * wikipedia_url: str
+- * wikidata_uri: str
+- * chunk_index: int
+- * total_chunks: int
 
 To enable semantic search, the processed text chunks are indexed in **ChromaDB**.
 

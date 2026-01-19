@@ -66,19 +66,12 @@ def ingest_graph_db(
     """
     Dagster asset that ingests music data into the Neo4j database.
     """
-    # Materialize LazyFrames to DataFrames for iteration
-    # We must collect because we need to iterate in batches for Neo4j
-    artists_df = artists.collect()
-    releases_df = releases.collect()
-    tracks_df = tracks.collect()
-    genres_df = genres.collect()
-    countries_df = countries.collect()
+    batch_size = settings.GRAPH_DB_INGESTION_BATCH_SIZE
 
+    # We define the track grouping lazily to avoid early materialization
     # Group tracks by album_id and build embedded track lists with position.
-    # Position is assigned based on order (1, 2, 3, ...)
-    # Neo4j only supports arrays of primitives, so we format as "position. title"
-    tracks_grouped = (
-        tracks_df
+    tracks_grouped_lazy = (
+        tracks
         .with_row_index("_row_idx")
         .with_columns(
             pl.col("_row_idx")
@@ -96,25 +89,22 @@ def ingest_graph_db(
         )
     )
 
-    # Join grouped tracks onto releases (left join to keep releases without tracks)
-    releases_df = releases_df.join(
-        tracks_grouped,
+    # Prepare lazy releases with tracks
+    releases_enriched_lazy = releases.join(
+        tracks_grouped_lazy,
         left_on="id",
         right_on="album_id",
         how="left"
     )
 
-    batch_size = settings.GRAPH_DB_INGESTION_BATCH_SIZE
-
     with neo4j.get_driver(context) as driver:
         # --- Step 1: Clear Database & Prepare ---
         clear_database(driver, context)
 
-        # --- Step 2: Node Ingestion ---
-        context.log.info("Starting Stage 1: Node Ingestion")
+        # --- Step 2: Node Ingestion (Sequential) ---
+        context.log.info("Starting Stage 1: Node Ingestion (Sequential)")
 
         # 0. Countries
-        country_count = 0
         # noinspection SqlNoDataSourceInspection
         country_query = """
         UNWIND $batch AS row
@@ -123,15 +113,18 @@ def ingest_graph_db(
             name: row.name
         });
         """
+        # Materialize only Countries for processing
+        countries_df = countries.collect()
+        country_count = 0
         if not countries_df.is_empty():
             for batch_df in countries_df.iter_slices(n_rows=batch_size):
                 batch_data = batch_df.to_dicts()
                 execute_cypher(driver, country_query, {"batch": batch_data})
                 country_count += len(batch_data)
         context.log.info(f"Loaded {country_count} countries.")
+        del countries_df  # Free memory
 
         # 1. Genres
-        genre_count = 0
         # noinspection SqlNoDataSourceInspection
         genre_query = """
         UNWIND $batch AS row
@@ -141,15 +134,18 @@ def ingest_graph_db(
             aliases: row.aliases
         });
         """
+        # Materialize only Genres
+        genres_df = genres.collect()
+        genre_count = 0
         if not genres_df.is_empty():
             for batch_df in genres_df.iter_slices(n_rows=batch_size):
                 batch_data = batch_df.to_dicts()
                 execute_cypher(driver, genre_query, {"batch": batch_data})
                 genre_count += len(batch_data)
         context.log.info(f"Loaded {genre_count} genres.")
+        del genres_df  # Free memory
 
         # 2. Artists
-        artist_count = 0
         # noinspection SqlNoDataSourceInspection
         artist_query = """
         UNWIND $batch AS row
@@ -160,15 +156,18 @@ def ingest_graph_db(
             aliases: row.aliases
         });
         """
+        # Materialize only Artists
+        artists_df = artists.collect()
+        artist_count = 0
         if not artists_df.is_empty():
             for batch_df in artists_df.iter_slices(n_rows=batch_size):
                 batch_data = batch_df.to_dicts()
                 execute_cypher(driver, artist_query, {"batch": batch_data})
                 artist_count += len(batch_data)
         context.log.info(f"Loaded {artist_count} artists.")
+        del artists_df  # Free memory
 
         # 3. Releases (with embedded tracks)
-        release_count = 0
         # noinspection SqlNoDataSourceInspection
         release_query = """
         UNWIND $batch AS row
@@ -179,21 +178,26 @@ def ingest_graph_db(
             tracks: row.tracks
         });
         """
+        # Materialize only Enriched Releases
+        releases_df = releases_enriched_lazy.collect()
+        release_count = 0
         if not releases_df.is_empty():
             for batch_df in releases_df.iter_slices(n_rows=batch_size):
                 batch_data = batch_df.to_dicts()
                 execute_cypher(driver, release_query, {"batch": batch_data})
                 release_count += len(batch_data)
         context.log.info(f"Loaded {release_count} releases.")
+        del releases_df  # Free memory
 
         # --- Step 3: Index Creation ---
         _create_indexes(driver, context)
 
-        # --- Step 4: Relationship Ingestion ---
+        # --- Step 4: Relationship Ingestion (Columnar Loads) ---
         context.log.info("Starting Stage 3: Relationship Ingestion")
 
         # 1. Artist -> Genre
-        ag_df = artists_df.filter(pl.col("genres").is_not_null())
+        # Only select needed columns to minimize memory usage
+        ag_df = artists.select("id", "genres").filter(pl.col("genres").is_not_null()).collect()
         if not ag_df.is_empty():
             ag_query = """
             UNWIND $batch AS row
@@ -202,16 +206,14 @@ def ingest_graph_db(
             MATCH (g:Genre {id: gid})
             MERGE (a)-[:PLAYS_GENRE]->(g)
             """
-            # Using smaller batch for relationships to be safe, though execute_cypher is auto-commit
-            # But here we use explicit batches in python loop.
             for batch_df in ag_df.iter_slices(n_rows=1000):
-                batch_data = batch_df.select(["id", "genres"]).to_dicts()
+                batch_data = batch_df.to_dicts()
                 execute_cypher(driver, ag_query, {"batch": batch_data})
         context.log.info("Ingested Artist -> Genre relationships.")
+        del ag_df
 
         # 2. Artist -> Artist (SIMILAR_TO)
-        # Matches against name OR aliases
-        aa_df = artists_df.filter(pl.col("similar_artists").is_not_null())
+        aa_df = artists.select("id", "similar_artists").filter(pl.col("similar_artists").is_not_null()).collect()
         if not aa_df.is_empty():
             aa_query = """
             UNWIND $batch AS row
@@ -223,12 +225,13 @@ def ingest_graph_db(
             MERGE (a)-[:SIMILAR_TO]->(target)
             """
             for batch_df in aa_df.iter_slices(n_rows=1000):
-                batch_data = batch_df.select(["id", "similar_artists"]).to_dicts()
+                batch_data = batch_df.to_dicts()
                 execute_cypher(driver, aa_query, {"batch": batch_data})
         context.log.info("Ingested Artist -> Artist relationships.")
+        del aa_df
 
         # 3. Release -> Artist
-        ra_df = releases_df.filter(pl.col("artist_id").is_not_null())
+        ra_df = releases.select("id", "artist_id").filter(pl.col("artist_id").is_not_null()).collect()
         if not ra_df.is_empty():
             ra_query = """
             UNWIND $batch AS row
@@ -237,12 +240,13 @@ def ingest_graph_db(
             MERGE (rel)-[:PERFORMED_BY]->(art)
             """
             for batch_df in ra_df.iter_slices(n_rows=1000):
-                batch_data = batch_df.select(["id", "artist_id"]).to_dicts()
+                batch_data = batch_df.to_dicts()
                 execute_cypher(driver, ra_query, {"batch": batch_data})
         context.log.info("Ingested Release -> Artist relationships.")
+        del ra_df
 
         # 4. Genre -> Genre
-        gg_df = genres_df.filter(pl.col("parent_ids").is_not_null())
+        gg_df = genres.select("id", "parent_ids").filter(pl.col("parent_ids").is_not_null()).collect()
         if not gg_df.is_empty():
             gg_query = """
             UNWIND $batch AS row
@@ -253,12 +257,13 @@ def ingest_graph_db(
             MERGE (g)-[:SUBGENRE_OF]->(parent)
             """
             for batch_df in gg_df.iter_slices(n_rows=1000):
-                batch_data = batch_df.select(["id", "parent_ids"]).to_dicts()
+                batch_data = batch_df.to_dicts()
                 execute_cypher(driver, gg_query, {"batch": batch_data})
         context.log.info("Ingested Genre -> Genre relationships.")
+        del gg_df
 
         # 5. Artist -> Country
-        ac_df = artists_df.filter(pl.col("country").is_not_null())
+        ac_df = artists.select("id", "country").filter(pl.col("country").is_not_null()).collect()
         if not ac_df.is_empty():
             ac_query = """
             UNWIND $batch AS row
@@ -267,27 +272,37 @@ def ingest_graph_db(
             MERGE (a)-[:FROM_COUNTRY]->(c)
             """
             for batch_df in ac_df.iter_slices(n_rows=1000):
-                batch_data = batch_df.select(["id", "country"]).to_dicts()
+                batch_data = batch_df.to_dicts()
                 execute_cypher(driver, ac_query, {"batch": batch_data})
         context.log.info("Ingested Artist -> Country relationships.")
+        del ac_df
 
         # --- Step 5: Validation ---
         _validate_graph_counts(driver, context, {
-            "Artist": len(artists_df),
-            "Release": len(releases_df),
-            "Genre": len(genres_df),
-            "Country": len(countries_df)
+            "Artist": artist_count,
+            "Release": release_count,
+            "Genre": genre_count,
+            "Country": country_count
         })
 
     context.log.info("Graph population complete.")
+    # Calculate totals for metadata (using the counts we already have)
+    # Note: tracks count isn't strictly tracked in the loop, but we can compute it if needed
+    # or just omit it / estimate. For strict metadata, we might need a lazy count.
+    # To avoid re-scanning tracks, we will omit 'tracks' from metadata or use a placeholder
+    # if we didn't count them. The original code used len(tracks_df).
+    # Since we care about O(1), we can do a lazy count if critical, or skip.
+    # We'll do a lazy count for metadata completeness.
+    total_tracks = tracks.select(pl.len()).collect().item()
+    
     return MaterializeResult(
         metadata={
             "total_records_input": {
-                "genres": len(genres_df),
-                "artists": len(artists_df),
-                "releases": len(releases_df),
-                "tracks": len(tracks_df),
-                "countries": len(countries_df)
+                "genres": genre_count,
+                "artists": artist_count,
+                "releases": release_count,
+                "tracks": total_tracks,
+                "countries": country_count
             },
             "nodes_ingested": {
                 "genres": genre_count,

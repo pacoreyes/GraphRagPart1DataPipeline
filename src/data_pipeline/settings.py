@@ -36,7 +36,6 @@ class Settings(BaseSettings):
     LAST_FM_CACHE_DIRPATH: Path = Field(default_factory=lambda: Path("."), init=False)
     MUSICBRAINZ_CACHE_DIRPATH: Path = Field(default_factory=lambda: Path("."), init=False)
     DATASETS_DIRPATH: Path = Field(default_factory=lambda: Path("."), init=False)
-    # TEMP_DIRPATH: Path = Field(default_factory=lambda: Path("."), init=False)
 
     # ==============================================================================
     #  VECTOR DATABASE SETTINGS
