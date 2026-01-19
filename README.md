@@ -402,7 +402,7 @@ RETURN node.name, node.aliases
 
 **Dataset Statistics:**
 - **Articles:** 4,679 processed.
-    - 29,979 chunks (documents)
+    - 30,005 chunks (documents) 
 - **Nodes:** 98,677.
     - 112 countries
     - 754 genres
