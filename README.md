@@ -321,6 +321,8 @@ We process Wikipedia articles to create a high-quality corpus for Retrieval-Augm
 | `article` | String | The enriched text content prepended with `search_document:`. |
 | `metadata` | JSON | Contextual tags: `title`, `artist_name`, `genres`, `inception_year`, `wikipedia_url`. |
 
+Download the dataset from Hugging Face: [pacoreyes/electronic-music-wikipedia-rag](https://huggingface.co/datasets/pacoreyes/electronic-music-wikipedia-rag)
+
 ### 2. Graph Database (Neo4j)
 
 We construct a deterministic Knowledge Graph to map the relationships between the musical entities. This allows for precise multi-hop queries (e.g., "Find all sub-genres of 'House' that originated in 'France'").
