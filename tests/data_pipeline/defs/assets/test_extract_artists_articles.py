@@ -1,24 +1,25 @@
-# ----------------------------------------------------------- 
-# Unit Tests for wikipedia_articles
+# -----------------------------------------------------------
+# Unit Tests for extract_artists_articles
 # Dagster Data pipeline for Structured and Unstructured Data
-# 
+#
 # (C) 2025-2026 Juan-Francisco Reyes, Cottbus, Germany
 # Released under MIT License
 # email pacoreyes@protonmail.com
-# ----------------------------------------------------------- 
+# -----------------------------------------------------------
 
 import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch, AsyncMock
 import polars as pl
-from dagster import build_asset_context, MaterializeResult
+from dagster import build_asset_context
 
-from data_pipeline.defs.assets.extract_wikipedia_articles import extract_wikipedia_articles
+from data_pipeline.defs.assets.extract_artists_articles import extract_artist_articles
 from data_pipeline.utils.network_helpers import AsyncClient
 
+
 @pytest.mark.asyncio
-@patch("data_pipeline.defs.assets.extract_wikipedia_articles.settings")
-async def test_extract_wikipedia_articles_flow(
+@patch("data_pipeline.defs.assets.extract_artists_articles.settings")
+async def test_extract_artists_articles_flow(
     mock_settings
 ):
     # Setup Mocks
@@ -38,7 +39,7 @@ async def test_extract_wikipedia_articles_flow(
     mock_settings.TEXT_CHUNK_OVERLAP = 10
     mock_settings.WIKIDATA_FALLBACK_LANGUAGES = ["en"]
     mock_settings.WIKIDATA_CONCEPT_BASE_URI_PREFIX = "http://wd.entity/"
-    
+
     # Mock Data DataFrames (Input)
     artists_df = pl.DataFrame([
         {"id": "Q1", "name": "Artist One", "genres": ["QG1"]},
@@ -59,18 +60,18 @@ async def test_extract_wikipedia_articles_flow(
                 "sitelinks": {"enwiki": {"title": "Artist One"}}
             }
         if "Q2" in qids:
-             result["Q2"] = {} # No sitelinks
+             result["Q2"] = {}  # No sitelinks
         return result
 
     # Mock Dependencies
-    with patch("data_pipeline.defs.assets.extract_wikipedia_articles.async_fetch_wikipedia_article", new_callable=AsyncMock) as mock_fetch, \
-         patch("data_pipeline.defs.assets.extract_wikipedia_articles.async_fetch_wikidata_entities_batch", side_effect=mock_fetch_entities), \
-         patch("data_pipeline.defs.assets.extract_wikipedia_articles.AutoTokenizer"), \
-         patch("data_pipeline.defs.assets.extract_wikipedia_articles.RecursiveCharacterTextSplitter") as mock_splitter_cls:
-        
+    with patch("data_pipeline.defs.assets.extract_artists_articles.async_fetch_wikipedia_article", new_callable=AsyncMock) as mock_fetch, \
+         patch("data_pipeline.defs.assets.extract_artists_articles.async_fetch_wikidata_entities_batch", side_effect=mock_fetch_entities), \
+         patch("data_pipeline.defs.assets.extract_artists_articles.create_rag_text_splitter") as mock_splitter_factory:
+
         mock_fetch.return_value = "This is a sufficiently long text for Artist One to ensure it passes the minimal content filter of 50 characters."
-        mock_splitter_instance = mock_splitter_cls.from_huggingface_tokenizer.return_value
+        mock_splitter_instance = MagicMock()
         mock_splitter_instance.split_text.return_value = ["Chunk 1", "Chunk 2"]
+        mock_splitter_factory.return_value = mock_splitter_instance
 
         from contextlib import asynccontextmanager
 
@@ -92,12 +93,12 @@ async def test_extract_wikipedia_articles_flow(
         mock_wikipedia.rate_limit_delay = 0
 
         # Run Asset
-        results = await extract_wikipedia_articles(
-            context, 
-            mock_wikidata, 
+        results = await extract_artist_articles(
+            context,
+            mock_wikidata,
             mock_wikipedia,
-            artists_df.lazy(), 
-            genres_df.lazy(), 
+            artists_df.lazy(),
+            genres_df.lazy(),
             index_df.lazy()
         )
 
@@ -105,12 +106,13 @@ async def test_extract_wikipedia_articles_flow(
         assert len(results) >= 1
         first_batch = results[0]
         assert first_batch[0].id == "Q1_chunk_1"
-        assert first_batch[0].metadata.artist_name == "Artist One"
+        assert first_batch[0].metadata.name == "Artist One"
+        assert first_batch[0].metadata.entity_type == "artist"
 
 
 @pytest.mark.asyncio
-@patch("data_pipeline.defs.assets.extract_wikipedia_articles.settings")
-async def test_extract_wikipedia_articles_deduplication(
+@patch("data_pipeline.defs.assets.extract_artists_articles.settings")
+async def test_extract_artists_articles_deduplication(
     mock_settings
 ):
     # Setup Mocks
@@ -130,11 +132,11 @@ async def test_extract_wikipedia_articles_deduplication(
     mock_settings.TEXT_CHUNK_OVERLAP = 10
     mock_settings.WIKIDATA_FALLBACK_LANGUAGES = ["en"]
     mock_settings.WIKIDATA_CONCEPT_BASE_URI_PREFIX = "http://wd.entity/"
-    
+
     # Mock Data DataFrames (Input) - DUPLICATES!
     artists_df = pl.DataFrame([
         {"id": "Q1", "name": "Artist One", "genres": ["QG1"]},
-        {"id": "Q1", "name": "Artist One", "genres": ["QG1"]} 
+        {"id": "Q1", "name": "Artist One", "genres": ["QG1"]}
     ])
     genres_df = pl.DataFrame([
         {"id": "QG1", "name": "Rock"}
@@ -153,14 +155,14 @@ async def test_extract_wikipedia_articles_deduplication(
         return result
 
     # Mock Dependencies
-    with patch("data_pipeline.defs.assets.extract_wikipedia_articles.async_fetch_wikipedia_article", new_callable=AsyncMock) as mock_fetch, \
-         patch("data_pipeline.defs.assets.extract_wikipedia_articles.async_fetch_wikidata_entities_batch", side_effect=mock_fetch_entities), \
-         patch("data_pipeline.defs.assets.extract_wikipedia_articles.AutoTokenizer"), \
-         patch("data_pipeline.defs.assets.extract_wikipedia_articles.RecursiveCharacterTextSplitter") as mock_splitter_cls:
-        
+    with patch("data_pipeline.defs.assets.extract_artists_articles.async_fetch_wikipedia_article", new_callable=AsyncMock) as mock_fetch, \
+         patch("data_pipeline.defs.assets.extract_artists_articles.async_fetch_wikidata_entities_batch", side_effect=mock_fetch_entities), \
+         patch("data_pipeline.defs.assets.extract_artists_articles.create_rag_text_splitter") as mock_splitter_factory:
+
         mock_fetch.return_value = "This is a sufficiently long text for Artist One to ensure it passes the minimal content filter of 50 characters."
-        mock_splitter_instance = mock_splitter_cls.from_huggingface_tokenizer.return_value
+        mock_splitter_instance = MagicMock()
         mock_splitter_instance.split_text.return_value = ["Chunk 1"]
+        mock_splitter_factory.return_value = mock_splitter_instance
 
         from contextlib import asynccontextmanager
 
@@ -182,12 +184,12 @@ async def test_extract_wikipedia_articles_deduplication(
         mock_wikipedia.rate_limit_delay = 0
 
         # Run Asset
-        results = await extract_wikipedia_articles(
-            context, 
-            mock_wikidata, 
+        results = await extract_artist_articles(
+            context,
+            mock_wikidata,
             mock_wikipedia,
-            artists_df.lazy(), 
-            genres_df.lazy(), 
+            artists_df.lazy(),
+            genres_df.lazy(),
             index_df.lazy()
         )
 
@@ -197,8 +199,8 @@ async def test_extract_wikipedia_articles_deduplication(
         all_articles = [a for batch in results for a in batch]
         assert len(all_articles) == 1
         assert all_articles[0].id == "Q1_chunk_1"
-        
-        # Verify fetch was called only once (although cache might prevent 2nd call, 
+        assert all_articles[0].metadata.entity_type == "artist"
+
+        # Verify fetch was called only once (although cache might prevent 2nd call,
         # deduplication prevents the attempt)
         assert mock_fetch.call_count == 1
-        

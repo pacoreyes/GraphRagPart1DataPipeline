@@ -20,14 +20,16 @@ from data_pipeline.defs.assets.ingest_vector_db import (
     ingest_vector_db,
 )
 
+
 class TestPrepareChromaMetadata:
     """Tests for the _prepare_chroma_metadata helper function."""
 
-    def test_prepare_chroma_metadata_full_data(self):
-        """Test metadata preparation with all fields present."""
+    def test_prepare_chroma_metadata_full_artist_data(self):
+        """Test metadata preparation with all artist fields present."""
         row_metadata = {
             "title": "Test Title",
-            "artist_name": "Test Artist",
+            "name": "Test Artist",
+            "entity_type": "artist",
             "country": "Germany",
             "wikipedia_url": "https://en.wikipedia.org/wiki/Test",
             "wikidata_uri": "https://www.wikidata.org/entity/Q123",
@@ -44,7 +46,8 @@ class TestPrepareChromaMetadata:
         result = _prepare_chroma_metadata(row)
 
         assert result["title"] == "Test Title"
-        assert result["artist_name"] == "Test Artist"
+        assert result["name"] == "Test Artist"
+        assert result["entity_type"] == "artist"
         assert result["country"] == "Germany"
         assert result["inception_year"] == 1990
         assert result["chunk_index"] == 1
@@ -55,34 +58,66 @@ class TestPrepareChromaMetadata:
         assert result["similar_artists"] == "Artist A, Artist B"
         assert result["genres"] == "Techno, House"
 
+    def test_prepare_chroma_metadata_genre_data(self):
+        """Test metadata preparation for genre articles."""
+        row_metadata = {
+            "title": "Techno",
+            "name": "Techno",
+            "entity_type": "genre",
+            "country": "United States",
+            "wikipedia_url": "https://en.wikipedia.org/wiki/Techno",
+            "wikidata_uri": "https://www.wikidata.org/entity/Q1298934",
+            "inception_year": 1988,
+            "chunk_index": 1,
+            "total_chunks": 3,
+            "aliases": ["techno music", "Detroit techno"],
+            # genres don't have tags, similar_artists, or genres fields
+        }
+        row = {"metadata": row_metadata}
+
+        result = _prepare_chroma_metadata(row)
+
+        assert result["title"] == "Techno"
+        assert result["name"] == "Techno"
+        assert result["entity_type"] == "genre"
+        assert result["country"] == "United States"
+        assert result["inception_year"] == 1988
+        assert result["aliases"] == "techno music, Detroit techno"
+        # Optional fields not present should not be in result
+        assert "tags" not in result
+        assert "similar_artists" not in result
+        assert "genres" not in result
+
     def test_prepare_chroma_metadata_sparse_data(self):
         """Test metadata preparation with sparse/missing fields."""
         row_metadata = {
             "title": "Minimal Title",
-            "artist_name": "Minimal Artist",
-            "country": "Unknown",
+            "name": "Minimal Genre",
+            "entity_type": "genre",
             "wikipedia_url": "https://test.com",
             "wikidata_uri": "https://test.org",
             "chunk_index": 1,
             "total_chunks": 1,
-            # Missing optional list fields
+            # Missing optional fields: country, inception_year, aliases, etc.
         }
         row = {"metadata": row_metadata}
 
         result = _prepare_chroma_metadata(row)
 
         assert result["title"] == "Minimal Title"
-        assert result["artist_name"] == "Minimal Artist"
-        assert result["country"] == "Unknown"
+        assert result["name"] == "Minimal Genre"
+        assert result["entity_type"] == "genre"
+        assert "country" not in result
         assert "inception_year" not in result
-        assert result["aliases"] == ""
-        assert result["tags"] == ""
+        assert "aliases" not in result
+        assert "tags" not in result
 
     def test_prepare_chroma_metadata_empty_lists(self):
-        """Test that empty lists are present as empty strings in metadata."""
+        """Test that empty lists are not included in metadata."""
         row_metadata = {
             "title": "Test",
-            "artist_name": "Artist",
+            "name": "Artist",
+            "entity_type": "artist",
             "country": "US",
             "wikipedia_url": "url",
             "wikidata_uri": "uri",
@@ -96,9 +131,27 @@ class TestPrepareChromaMetadata:
 
         result = _prepare_chroma_metadata(row)
 
-        assert result["aliases"] == ""
-        assert result["tags"] == ""
-        assert result["genres"] == ""
+        # Empty lists should not be included
+        assert "aliases" not in result
+        assert "tags" not in result
+        assert "genres" not in result
+
+    def test_prepare_chroma_metadata_defaults_entity_type(self):
+        """Test that entity_type defaults to 'artist' for backward compatibility."""
+        row_metadata = {
+            "title": "Test",
+            "name": "Test",
+            "wikipedia_url": "url",
+            "wikidata_uri": "uri",
+            "chunk_index": 1,
+            "total_chunks": 1,
+            # entity_type missing
+        }
+        row = {"metadata": row_metadata}
+
+        result = _prepare_chroma_metadata(row)
+
+        assert result["entity_type"] == "artist"
 
 
 class TestIterBatches:
@@ -108,9 +161,9 @@ class TestIterBatches:
         """Test that batches are yielded correctly."""
         data = {"col": range(5)}
         lf = pl.DataFrame(data).lazy()
-        
+
         batches = list(_iter_batches(lf, batch_size=2))
-        
+
         assert len(batches) == 3
         assert len(batches[0]) == 2
         assert len(batches[1]) == 2
@@ -140,26 +193,26 @@ class TestIngestVectorDbAsset:
     ):
         """Test successful ingestion of documents."""
         mock_get_device.return_value = MagicMock(__str__=lambda self: "cpu")
-        
-        # Create input LazyFrame
+
+        # Create input LazyFrame with mixed artist and genre articles
         data = {
             "id": ["Q1", "Q2", "Q3"],
-            "article": ["Content 1", "Content 2", "Content 3"],
+            "article": ["Artist content", "Genre content", "Another artist"],
             "metadata": [
                 {
-                    "title": "T1", "artist_name": "A1", "country": "US",
-                    "wikipedia_url": "u", "wikidata_uri": "uri", "chunk_index": 1, "total_chunks": 1,
-                    "tags": ["pop"]
+                    "title": "T1", "name": "Artist One", "entity_type": "artist",
+                    "country": "US", "wikipedia_url": "u", "wikidata_uri": "uri",
+                    "chunk_index": 1, "total_chunks": 1, "tags": ["pop"]
                 },
                 {
-                    "title": "T2", "artist_name": "A2", "country": "UK",
-                    "wikipedia_url": "u", "wikidata_uri": "uri", "chunk_index": 1, "total_chunks": 1,
-                    "tags": ["rock"]
+                    "title": "Techno", "name": "Techno", "entity_type": "genre",
+                    "country": "US", "wikipedia_url": "u", "wikidata_uri": "uri",
+                    "chunk_index": 1, "total_chunks": 1, "aliases": ["techno music"]
                 },
                 {
-                    "title": "T3", "artist_name": "A3", "country": "FR",
-                    "wikipedia_url": "u", "wikidata_uri": "uri", "chunk_index": 1, "total_chunks": 1,
-                    "tags": ["jazz"]
+                    "title": "T3", "name": "Artist Two", "entity_type": "artist",
+                    "wikipedia_url": "u", "wikidata_uri": "uri",
+                    "chunk_index": 1, "total_chunks": 1
                 }
             ]
         }
@@ -190,3 +243,33 @@ class TestIngestVectorDbAsset:
         assert result.metadata["status"] == "success"
         # batch size is 2, total 3 articles -> 2 batches, so upsert called 2 times
         assert mock_collection.upsert.call_count == 2
+
+    @patch("data_pipeline.defs.assets.ingest_vector_db.NomicEmbeddingFunction")
+    @patch("data_pipeline.defs.assets.ingest_vector_db.get_device")
+    def test_ingest_vector_db_empty_input(
+        self,
+        mock_get_device,
+        mock_embedding_class,
+        mock_chromadb_resource,
+    ):
+        """Test ingestion with empty input."""
+        mock_get_device.return_value = MagicMock(__str__=lambda self: "cpu")
+
+        # Empty input
+        wikipedia_articles = pl.DataFrame({
+            "id": [],
+            "article": [],
+            "metadata": []
+        }).lazy()
+
+        context = build_asset_context()
+
+        result = ingest_vector_db(
+            context,
+            mock_chromadb_resource,
+            wikipedia_articles
+        )
+
+        assert isinstance(result, MaterializeResult)
+        assert result.metadata["documents_processed"] == 0
+        assert result.metadata["status"] == "empty_input"

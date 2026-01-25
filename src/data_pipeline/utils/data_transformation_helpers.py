@@ -13,6 +13,8 @@ from typing import Union, Optional, overload, Sequence, Any
 
 import ftfy
 import polars as pl
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from transformers import AutoTokenizer
 
 
 @overload
@@ -154,3 +156,28 @@ def format_list_natural_language(items: Optional[Sequence[Any]]) -> str:
         return f"{clean_items[0]} and {clean_items[1]}"
         
     return f"{', '.join(clean_items[:-1])}, and {clean_items[-1]}"
+
+
+def create_rag_text_splitter(
+    model_name: str,
+    chunk_size: int,
+    chunk_overlap: int,
+) -> RecursiveCharacterTextSplitter:
+    """
+    Creates a text splitter configured for RAG chunking using a HuggingFace tokenizer.
+
+    Args:
+        model_name: HuggingFace model name for the tokenizer (e.g., "nomic-ai/nomic-embed-text-v1.5").
+        chunk_size: Maximum number of tokens per chunk.
+        chunk_overlap: Number of overlapping tokens between consecutive chunks.
+
+    Returns:
+        A configured RecursiveCharacterTextSplitter instance.
+    """
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    return RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
+        tokenizer,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        separators=["\n\n", "\n", ". ", "? ", "! ", " ", ""],
+    )

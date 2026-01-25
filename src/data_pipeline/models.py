@@ -68,16 +68,19 @@ class Country(msgspec.Struct, kw_only=True, omit_defaults=True):
 class ArticleMetadata(msgspec.Struct, kw_only=True, omit_defaults=True):
     """
     Metadata for a Wikipedia article chunk.
+
+    Supports both artist and genre articles with sparse fields.
     """
 
     title: str
-    artist_name: str
+    name: str
+    entity_type: str  # "artist" or "genre"
     aliases: Optional[list[str]] = None
     tags: Optional[list[str]] = None
     similar_artists: Optional[list[str]] = None
     genres: Optional[list[str]] = None
     inception_year: Optional[int] = None
-    country: str
+    country: Optional[str] = None
     wikipedia_url: str
     wikidata_uri: str
     chunk_index: int

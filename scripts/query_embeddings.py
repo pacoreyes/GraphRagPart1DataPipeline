@@ -80,7 +80,7 @@ def main() -> None:
                 print(f"  - ID:       {doc_id}")
                 print(f"  - Chunk index: {meta['chunk_index']}  |  Total chunks: {meta['total_chunks']}")
                 print(f"  - Distance: {dist:.4f}" if isinstance(dist, float) else f"  - Distance: {dist}")
-                print(f"  - Title:    {meta['title']} | Artist:   {meta['artist_name']}")
+                print(f"  - Title:    {meta['title']} | Name:   {meta['name']}")
                 print(f"  - Aliases:  {meta.get('aliases', 'N/A')}")
                 print(f"  - Similar:  {meta.get('similar_artists', 'N/A')}")
                 print(f"  - Genres:   {meta.get('genres', 'N/A')}")

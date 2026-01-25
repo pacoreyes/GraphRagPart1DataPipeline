@@ -4,6 +4,8 @@ from . import extract_countries
 from . import extract_genres
 from . import extract_releases
 from . import extract_tracks
-from . import extract_wikipedia_articles
+from . import extract_artists_articles
+from . import extract_genres_articles
+from . import merge_wikipedia_articles
 from . import ingest_graph_db
 from . import ingest_vector_db

@@ -1,10 +1,17 @@
+# -----------------------------------------------------------
+# Extract Artists Articles from Wikipedia API
+# Dagster Data pipeline for Structured and Unstructured Data
+#
+# (C) 2025-2026 Juan-Francisco Reyes, Cottbus, Germany
+# Released under MIT License
+# email pacoreyes@protonmail.com
+# -----------------------------------------------------------
+
 import asyncio
 from typing import Any
 
 import polars as pl
 from dagster import asset, AssetExecutionContext
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from transformers import AutoTokenizer
 
 from data_pipeline.models import Article, ArticleMetadata
 from data_pipeline.settings import settings
@@ -12,6 +19,7 @@ from data_pipeline.utils.network_helpers import yield_batches_concurrently, Asyn
 from data_pipeline.utils.data_transformation_helpers import (
     normalize_and_clean_text,
     format_list_natural_language,
+    create_rag_text_splitter,
 )
 from data_pipeline.utils.wikidata_helpers import (
     async_fetch_wikidata_entities_batch,
@@ -32,11 +40,11 @@ WIKIPEDIA_EXCLUSION_HEADERS = [
 
 
 @asset(
-    name="wikipedia_articles",
-    description="Extract Wikipedia articles, clean, split, and enrich with metadata for RAG.",
+    name="artists_articles",
+    description="Extract artists articles from Wikipedia, clean, split, and enrich with metadata for RAG.",
     io_manager_key="jsonl_io_manager"
 )
-async def extract_wikipedia_articles(
+async def extract_artist_articles(
     context: AssetExecutionContext, 
     wikidata: WikidataResource,
     wikipedia: WikipediaResource,
@@ -45,7 +53,8 @@ async def extract_wikipedia_articles(
     artist_index: pl.LazyFrame
 ) -> list[list[Article]]:
     """
-    Orchestrates the fetching, cleaning, chunking, and enrichment of Wikipedia articles for all validated artists in the pipeline.
+    Orchestrates the fetching, cleaning, chunking, and enrichment of artist articles fro Wikipedia for all
+    validated artists in the pipeline.
 
     Args:
         context: Dagster execution context for logging.
@@ -92,14 +101,10 @@ async def extract_wikipedia_articles(
     context.log.info(f"Found {total_rows} artists to process for Wikipedia articles.")
 
     # 2. Setup Splitter
-    tokenizer = AutoTokenizer.from_pretrained(
-        settings.DEFAULT_EMBEDDINGS_MODEL_NAME, trust_remote_code=True
-    )
-    text_splitter = RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
-        tokenizer,
+    text_splitter = create_rag_text_splitter(
+        model_name=settings.DEFAULT_EMBEDDINGS_MODEL_NAME,
         chunk_size=settings.TEXT_CHUNK_SIZE,
         chunk_overlap=settings.TEXT_CHUNK_OVERLAP,
-        separators=["\n\n", "\n", ". ", "? ", "! ", " ", ""],
     )
 
     # 3. Worker Function
@@ -196,8 +201,9 @@ async def extract_wikipedia_articles(
 
             meta = ArticleMetadata(
                 title=title.replace("_", " "),
-                artist_name=artist_name,
-                country=country or "Unknown",
+                name=artist_name,
+                entity_type="artist",
+                country=country or None,
                 aliases=artist_row.get("aliases") or None,
                 tags=tags or None,
                 similar_artists=artist_row.get("similar_artists") or None,
@@ -213,12 +219,15 @@ async def extract_wikipedia_articles(
         return results
 
     async def process_batch_wrapper(
-        batch: list[dict[str, Any]], wikidata_client: AsyncClient, wikipedia_client: AsyncClient
+        batch: list[dict[str, Any]],
+        wikidata_client: AsyncClient,
+        wikipedia_client: AsyncClient,
+        sem: asyncio.Semaphore
     ) -> list[Article]:
         qids = [str(row.get("id") or "") for row in batch]
         entities = await async_fetch_wikidata_entities_batch(
-            context, 
-            qids, 
+            context,
+            qids,
             api_url=settings.WIKIDATA_ACTION_API_URL,
             cache_dir=settings.WIKIDATA_CACHE_DIRPATH,
             languages=settings.WIKIDATA_FALLBACK_LANGUAGES,
@@ -227,8 +236,6 @@ async def extract_wikipedia_articles(
             headers=settings.DEFAULT_REQUEST_HEADERS,
             client=wikidata_client
         )
-        
-        sem = asyncio.Semaphore(settings.WIKIPEDIA_CONCURRENT_REQUESTS)
 
         async def bounded_process(row: dict[str, Any], url: str) -> list[Article]:
             async with sem:
@@ -243,7 +250,7 @@ async def extract_wikipedia_articles(
             wiki_url = extract_wikidata_wikipedia_url(entity_data)
             if wiki_url:
                 tasks.append(bounded_process(row, wiki_url))
-        
+
         if not tasks:
             return []
         results_nested = await asyncio.gather(*tasks)
@@ -251,10 +258,13 @@ async def extract_wikipedia_articles(
 
     # 4. Execution Loop
     all_batches = []
+    # Global semaphore shared across all batches to limit Wikipedia concurrent requests
+    wikipedia_semaphore = asyncio.Semaphore(settings.WIKIPEDIA_CONCURRENT_REQUESTS)
+
     async with wikidata.get_client(context) as wikidata_client, wikipedia.get_client(context) as wikipedia_client:
-        
+
         async def processor_with_two_clients(batch, _):
-            return await process_batch_wrapper(batch, wikidata_client, wikipedia_client)
+            return await process_batch_wrapper(batch, wikidata_client, wikipedia_client, wikipedia_semaphore)
 
         article_stream = yield_batches_concurrently(
             items=rows_to_process,

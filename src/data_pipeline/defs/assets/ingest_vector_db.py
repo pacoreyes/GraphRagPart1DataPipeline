@@ -2,11 +2,6 @@
 # Ingest Wikipedia article chunks into ChromaD Vector DB Asset
 # Dagster Data pipeline for Structured and Unstructured Data
 #
-# This asset consumes pre-processed article chunks (already containing
-# the 'search_document:' prefix from extract_wikipedia_articles) and
-# ingests them into a ChromaDB collection with embeddings generated
-# using the Nomic model.
-#
 # (C) 2025-2026 Juan-Francisco Reyes, Cottbus, Germany
 # Released under MIT License
 # email pacoreyes@protonmail.com
@@ -30,6 +25,7 @@ def _prepare_chroma_metadata(row: dict[str, Any]) -> dict[str, Any]:
     """
     Prepares metadata for ChromaDB from an article row.
     Handles sparse data by excluding empty/null values.
+    Supports both artist and genre articles.
 
     Args:
         row: Dictionary containing article data with 'metadata' field.
@@ -40,24 +36,39 @@ def _prepare_chroma_metadata(row: dict[str, Any]) -> dict[str, Any]:
     metadata = row.get("metadata") or {}
 
     result = {
-        # guarantied fields
+        # guaranteed fields
         "title": metadata["title"],
-        "artist_name": metadata["artist_name"],
-        "country": metadata["country"],
+        "name": metadata["name"],
+        "entity_type": metadata.get("entity_type", "artist"),
         "wikipedia_url": metadata["wikipedia_url"],
         "wikidata_uri": metadata["wikidata_uri"],
         "chunk_index": metadata["chunk_index"],
         "total_chunks": metadata["total_chunks"],
-
-        # optional fields
-        "aliases": ", ".join(metadata.get("aliases") or []),
-        "tags": ", ".join(metadata.get("tags") or []),
-        "similar_artists": ", ".join(metadata.get("similar_artists") or []),
-        "genres": ", ".join(metadata.get("genres") or []),
     }
-    # omit empty scalar fields
+
+    # optional scalar fields
+    if metadata.get("country"):
+        result["country"] = metadata["country"]
+
     if metadata.get("inception_year"):
         result["inception_year"] = metadata["inception_year"]
+
+    # optional list fields (convert to comma-separated strings)
+    aliases = metadata.get("aliases")
+    if aliases:
+        result["aliases"] = ", ".join(aliases)
+
+    tags = metadata.get("tags")
+    if tags:
+        result["tags"] = ", ".join(tags)
+
+    similar_artists = metadata.get("similar_artists")
+    if similar_artists:
+        result["similar_artists"] = ", ".join(similar_artists)
+
+    genres = metadata.get("genres")
+    if genres:
+        result["genres"] = ", ".join(genres)
 
     return result
 
@@ -132,12 +143,12 @@ def ingest_vector_db(
     3. Generates embeddings and upserts to ChromaDB
 
     Documents are expected to already contain the 'search_document:' prefix
-    from the upstream extract_wikipedia_articles asset.
+    from the upstream article extraction assets (artists and genres).
 
     Args:
         context: Dagster execution context.
         chromadb: ChromaDB resource with collection configuration.
-        wikipedia_articles: LazyFrame of pre-processed article chunks.
+        wikipedia_articles: LazyFrame of pre-processed article chunks (artists + genres).
 
     Returns:
         MaterializeResult with ingestion statistics.
